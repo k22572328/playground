@@ -1,6 +1,6 @@
 // Package server 把大廳與牌局接上 WebSocket，並提供前端靜態檔。
 // 它是唯一認識 HTTP 的一層；規則與房間邏輯都在 game、match、lobby。
-package server
+package platform
 
 import (
 	"errors"
@@ -13,12 +13,11 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"bigTwo/internal/game"
-	"bigTwo/internal/gamelog"
-	"bigTwo/internal/lobby"
-	"bigTwo/internal/match"
-	"bigTwo/internal/shuffle"
-	"bigTwo/web"
+	"playground/internal/games/bigtwo/gamelog"
+	"playground/internal/games/bigtwo/match"
+	"playground/internal/games/bigtwo/rules"
+	"playground/internal/shuffle"
+	"playground/web"
 )
 
 const (
@@ -82,9 +81,9 @@ func NewWithOptions(opts Options) *Server {
 	// 用 crypto/rand 洗牌：玩家不該能從先前的牌局推算出後續的發牌，
 	// 而且它沒有共用狀態，多個房間同時發牌也安全。
 	var shuffler shuffle.Crypto
-	l := lobby.New(shuffler)
+	l := newLobby(shuffler)
 	if opts.LogDir != "" {
-		l = lobby.NewWithRecorder(shuffler, recorderFactory(opts.LogDir))
+		l = newLobbyWithRecorder(shuffler, recorderFactory(opts.LogDir))
 	}
 
 	s := &Server{
@@ -131,8 +130,8 @@ func (s *Server) reapLoop() {
 
 // recorderFactory 產生一個在 dir 底下開紀錄檔的工廠。
 // 開檔失敗只記在伺服器日誌裡，遊戲照常進行 —— 記錄不該擋住玩家。
-func recorderFactory(dir string) lobby.NewRecorder {
-	return func(roomID string, names [match.NumPlayers]string) lobby.Recorder {
+func recorderFactory(dir string) NewRecorder {
+	return func(roomID string, names [match.NumPlayers]string) Recorder {
 		rec, err := gamelog.Create(dir, roomID, names)
 		if err != nil {
 			log.Printf("建立牌局紀錄失敗（遊戲繼續進行）: %v", err)
@@ -191,7 +190,7 @@ func (s *Server) markDisconnected(c *client) {
 	roomID := s.hub.roomOf(c.playerID)
 	holdsSeat := false
 	if roomID != "" {
-		_ = s.hub.lobby.Read(roomID, func(r *lobby.Room) { holdsSeat = r.Started })
+		_ = s.hub.lobby.Read(roomID, func(r *Room) { holdsSeat = r.Started })
 	}
 
 	s.sessions.update(c.token, func(sess *session) {
@@ -388,7 +387,7 @@ func (s *Server) createRoom(c *client, roomName string) error {
 		roomName = name + " 的房間"
 	}
 
-	r := s.hub.lobby.Create(roomName, lobby.Seat{PlayerID: c.playerID, Name: name})
+	r := s.hub.lobby.Create(roomName, Seat{PlayerID: c.playerID, Name: name})
 	s.hub.setRoom(c.playerID, r.ID)
 	s.rememberRoom(c, r.ID)
 	s.hub.broadcastRoom(r.ID)
@@ -403,7 +402,7 @@ func (s *Server) joinRoom(c *client, roomID string) error {
 		return errEmptyName
 	}
 
-	r, err := s.hub.lobby.Join(roomID, lobby.Seat{PlayerID: c.playerID, Name: name})
+	r, err := s.hub.lobby.Join(roomID, Seat{PlayerID: c.playerID, Name: name})
 	if err != nil {
 		return err
 	}
@@ -418,7 +417,7 @@ func (s *Server) joinRoom(c *client, roomID string) error {
 func (s *Server) leaveRoom(c *client) error {
 	roomID := s.hub.roomOf(c.playerID)
 	if roomID == "" {
-		return lobby.ErrNotInRoom
+		return ErrNotInRoom
 	}
 	if err := s.hub.lobby.Leave(roomID, c.playerID); err != nil {
 		return err
@@ -434,7 +433,7 @@ func (s *Server) leaveRoom(c *client) error {
 func (s *Server) kick(c *client, targetID string) error {
 	roomID := s.hub.roomOf(c.playerID)
 	if roomID == "" {
-		return lobby.ErrNotInRoom
+		return ErrNotInRoom
 	}
 	if err := s.hub.lobby.Kick(roomID, c.playerID, targetID); err != nil {
 		return err
@@ -453,7 +452,7 @@ func (s *Server) kick(c *client, targetID string) error {
 func (s *Server) start(c *client) error {
 	roomID := s.hub.roomOf(c.playerID)
 	if roomID == "" {
-		return lobby.ErrNotInRoom
+		return ErrNotInRoom
 	}
 	if _, err := s.hub.lobby.Start(roomID, c.playerID); err != nil {
 		return err
@@ -467,7 +466,7 @@ func (s *Server) start(c *client) error {
 func (s *Server) play(c *client, refs []cardRef) error {
 	roomID := s.hub.roomOf(c.playerID)
 	if roomID == "" {
-		return lobby.ErrNotInRoom
+		return ErrNotInRoom
 	}
 	cards, err := toCards(refs)
 	if err != nil {
@@ -481,19 +480,19 @@ func (s *Server) play(c *client, refs []cardRef) error {
 }
 
 // toCards 把前端送來的牌轉成引擎用的型別，順便擋掉超出範圍的數值。
-func toCards(refs []cardRef) ([]game.Card, error) {
+func toCards(refs []cardRef) ([]rules.Card, error) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
-	cards := make([]game.Card, 0, len(refs))
+	cards := make([]rules.Card, 0, len(refs))
 	for _, ref := range refs {
-		if ref.Rank < int(game.Three) || ref.Rank > int(game.Two) {
-			return nil, game.ErrInvalidCombo
+		if ref.Rank < int(rules.Three) || ref.Rank > int(rules.Two) {
+			return nil, rules.ErrInvalidCombo
 		}
-		if ref.Suit < int(game.Clubs) || ref.Suit > int(game.Spades) {
-			return nil, game.ErrInvalidCombo
+		if ref.Suit < int(rules.Clubs) || ref.Suit > int(rules.Spades) {
+			return nil, rules.ErrInvalidCombo
 		}
-		cards = append(cards, game.Card{Rank: game.Rank(ref.Rank), Suit: game.Suit(ref.Suit)})
+		cards = append(cards, rules.Card{Rank: rules.Rank(ref.Rank), Suit: rules.Suit(ref.Suit)})
 	}
 	return cards, nil
 }

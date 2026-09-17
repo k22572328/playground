@@ -1,4 +1,4 @@
-package server
+package platform
 
 // 前端與伺服器之間的訊息格式。前端送 inbound，伺服器回 outbound。
 

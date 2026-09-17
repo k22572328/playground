@@ -1,4 +1,4 @@
-package lobby
+package platform
 
 import (
 	"fmt"
@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"bigTwo/internal/game"
-	"bigTwo/internal/match"
+	"playground/internal/games/bigtwo/match"
+	"playground/internal/games/bigtwo/rules"
 )
 
 // TestConcurrentJoinNeverOverfills 讓大量玩家同時搶同一間房，
@@ -17,7 +17,7 @@ func TestConcurrentJoinNeverOverfills(t *testing.T) {
 	const contenders = 200
 
 	for round := range 50 {
-		l := newLobby()
+		l := newTestLobby()
 		r := l.Create("搶位子", seat("host", "房長"))
 
 		var wg sync.WaitGroup
@@ -50,7 +50,7 @@ func TestConcurrentJoinNeverOverfills(t *testing.T) {
 // 驗證只會真的開出一局，不會重複發牌。
 func TestConcurrentStartOnlyOnce(t *testing.T) {
 	for round := range 50 {
-		l := newLobby()
+		l := newTestLobby()
 		r := fill(t, l, l.Create("搶開始", seat("host", "房長")))
 
 		var mu sync.Mutex
@@ -79,7 +79,7 @@ func TestConcurrentStartOnlyOnce(t *testing.T) {
 // TestConcurrentLeaveAndJoin 混合並行的加入與離開，驗證房間狀態不會壞掉：
 // 座位數永遠在合法範圍內，且不會出現重複的玩家。
 func TestConcurrentLeaveAndJoin(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := l.Create("進進出出", seat("host", "房長"))
 	roomID := r.ID
 
@@ -116,17 +116,17 @@ func TestConcurrentLeaveAndJoin(t *testing.T) {
 // TestConcurrentPlayKeepsMatchConsistent 讓四位玩家同時搶著出牌，
 // 驗證牌局狀態不會被並行寫壞：手牌總數必須始終守恆。
 func TestConcurrentPlayKeepsMatchConsistent(t *testing.T) {
-	l := New(rand.New(rand.NewSource(7)))
+	l := newLobby(rand.New(rand.NewSource(7)))
 	r := fill(t, l, l.Create("搶出牌", seat("host", "房長")))
 	if _, err := l.Start(r.ID, "host"); err != nil {
 		t.Fatalf("Start 失敗: %v", err)
 	}
 
 	// 先記下每個人的手牌，讓各 goroutine 拿真牌去搶出。
-	hands := make(map[string][]game.Card)
+	hands := make(map[string][]rules.Card)
 	ids := []string{"host", "p2", "p3", "p4"}
 	for i, id := range ids {
-		hands[id] = append([]game.Card(nil), r.Match.Players[i].Hand...)
+		hands[id] = append([]rules.Card(nil), r.Match.Players[i].Hand...)
 	}
 
 	var wg sync.WaitGroup

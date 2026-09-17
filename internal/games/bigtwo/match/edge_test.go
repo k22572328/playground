@@ -3,7 +3,7 @@ package match
 import (
 	"testing"
 
-	"bigTwo/internal/game"
+	"playground/internal/games/bigtwo/rules"
 )
 
 // TestGoingOutEndsRoundImmediately 驗證打完最後一手就立刻結束 Round：
@@ -11,12 +11,12 @@ import (
 // 順位者馬上取得自由出牌權，不必讓其他人再空跑一輪 PASS。
 func TestGoingOutEndsRoundImmediately(t *testing.T) {
 	m := newRigged(t)
-	setHands(m, [NumPlayers][]game.Card{
-		0: {game.ClubThree, card(game.Eight, game.Clubs), card(game.Eight, game.Diamonds)},
+	setHands(m, [NumPlayers][]rules.Card{
+		0: {rules.ClubThree, card(rules.Eight, rules.Clubs), card(rules.Eight, rules.Diamonds)},
 		// 其餘三家手上都是散牌，湊不出對子。
-		1: {card(game.Four, game.Clubs), card(game.Nine, game.Clubs), card(game.Ten, game.Clubs)},
-		2: {card(game.Five, game.Clubs), card(game.Nine, game.Diamonds), card(game.Ten, game.Diamonds)},
-		3: {card(game.Six, game.Clubs), card(game.Nine, game.Hearts), card(game.Ten, game.Hearts)},
+		1: {card(rules.Four, rules.Clubs), card(rules.Nine, rules.Clubs), card(rules.Ten, rules.Clubs)},
+		2: {card(rules.Five, rules.Clubs), card(rules.Nine, rules.Diamonds), card(rules.Ten, rules.Diamonds)},
+		3: {card(rules.Six, rules.Clubs), card(rules.Nine, rules.Hearts), card(rules.Ten, rules.Hearts)},
 	})
 
 	// 先讓座位 0 取得自由出牌權。
@@ -26,7 +26,7 @@ func TestGoingOutEndsRoundImmediately(t *testing.T) {
 	mustPlay(t, m, 3, nil)
 
 	// 座位 0 打出對 8，這是他的最後一手。
-	mustPlay(t, m, 0, []game.Card{card(game.Eight, game.Clubs), card(game.Eight, game.Diamonds)})
+	mustPlay(t, m, 0, []rules.Card{card(rules.Eight, rules.Clubs), card(rules.Eight, rules.Diamonds)})
 
 	// 名次當下就確定。
 	if m.Players[0].Rank != 1 {
@@ -54,17 +54,17 @@ func TestGoingOutEndsRoundImmediately(t *testing.T) {
 // 其他人都已離場，該對手一 PASS，Round 就該立刻結束。
 func TestEveryoneElseOutEndsRound(t *testing.T) {
 	m := newRigged(t)
-	setHands(m, [NumPlayers][]game.Card{
-		0: {game.ClubThree},
-		1: {card(game.Four, game.Clubs)},
-		2: {card(game.Five, game.Clubs), card(game.Ace, game.Spades)},
-		3: {card(game.Six, game.Clubs), card(game.King, game.Spades)},
+	setHands(m, [NumPlayers][]rules.Card{
+		0: {rules.ClubThree},
+		1: {card(rules.Four, rules.Clubs)},
+		2: {card(rules.Five, rules.Clubs), card(rules.Ace, rules.Spades)},
+		3: {card(rules.Six, rules.Clubs), card(rules.King, rules.Spades)},
 	})
-	openWithClubThree(t, m)                                     // 座位 0 出完 → 第一名
-	mustPlay(t, m, 1, []game.Card{card(game.Four, game.Clubs)}) // 座位 1 出完 → 第二名
+	openWithClubThree(t, m)                                        // 座位 0 出完 → 第一名
+	mustPlay(t, m, 1, []rules.Card{card(rules.Four, rules.Clubs)}) // 座位 1 出完 → 第二名
 
 	// 現在只剩座位 2、3 還有牌，檯面是梅花 4。
-	mustPlay(t, m, 2, []game.Card{card(game.Five, game.Clubs)})
+	mustPlay(t, m, 2, []rules.Card{card(rules.Five, rules.Clubs)})
 	// 座位 3 一 PASS，就只剩座位 2 有資格 —— Round 立刻結束，由座位 2 首攻。
 	mustPlay(t, m, 3, nil)
 	if m.Turn != 2 {
@@ -78,18 +78,18 @@ func TestEveryoneElseOutEndsRound(t *testing.T) {
 // TestSuccessionSkipsMultipleOutPlayers 驗證順位會連續跳過多位已離場的玩家。
 func TestSuccessionSkipsMultipleOutPlayers(t *testing.T) {
 	m := newRigged(t)
-	setHands(m, [NumPlayers][]game.Card{
-		0: {game.ClubThree},
-		1: {card(game.Four, game.Clubs)},
-		2: {card(game.Five, game.Clubs), card(game.Nine, game.Clubs)},
-		3: {card(game.Six, game.Clubs), card(game.Ten, game.Clubs)},
+	setHands(m, [NumPlayers][]rules.Card{
+		0: {rules.ClubThree},
+		1: {card(rules.Four, rules.Clubs)},
+		2: {card(rules.Five, rules.Clubs), card(rules.Nine, rules.Clubs)},
+		3: {card(rules.Six, rules.Clubs), card(rules.Ten, rules.Clubs)},
 	})
-	openWithClubThree(t, m)                                     // 座位 0 離場
-	mustPlay(t, m, 1, []game.Card{card(game.Four, game.Clubs)}) // 座位 1 離場
+	openWithClubThree(t, m)                                        // 座位 0 離場
+	mustPlay(t, m, 1, []rules.Card{card(rules.Four, rules.Clubs)}) // 座位 1 離場
 
 	// 座位 2、3 打完這個 Round，最後由座位 3 贏下但他還有牌。
-	mustPlay(t, m, 2, []game.Card{card(game.Five, game.Clubs)})
-	mustPlay(t, m, 3, []game.Card{card(game.Six, game.Clubs)})
+	mustPlay(t, m, 2, []rules.Card{card(rules.Five, rules.Clubs)})
+	mustPlay(t, m, 3, []rules.Card{card(rules.Six, rules.Clubs)})
 	// 繞回來時座位 0、1 都已離場，應直接跳到座位 2。
 	if m.Turn != 2 {
 		t.Errorf("應跳過已離場的座位 0、1，實際輪到 %d", m.Turn)
@@ -100,16 +100,16 @@ func TestSuccessionSkipsMultipleOutPlayers(t *testing.T) {
 // 座位 3 打完最後一手並贏下 Round，下一個首攻應繞回還有牌的座位 0。
 func TestWinnerOfRoundLeavesSuccessionWraps(t *testing.T) {
 	m := newRigged(t)
-	setHands(m, [NumPlayers][]game.Card{
-		0: {game.ClubThree, card(game.Nine, game.Clubs), card(game.Nine, game.Diamonds)},
-		1: {card(game.Four, game.Clubs), card(game.Ten, game.Clubs)},
-		2: {card(game.Five, game.Clubs), card(game.Jack, game.Clubs)},
-		3: {card(game.Six, game.Clubs)}, // 打完就離場
+	setHands(m, [NumPlayers][]rules.Card{
+		0: {rules.ClubThree, card(rules.Nine, rules.Clubs), card(rules.Nine, rules.Diamonds)},
+		1: {card(rules.Four, rules.Clubs), card(rules.Ten, rules.Clubs)},
+		2: {card(rules.Five, rules.Clubs), card(rules.Jack, rules.Clubs)},
+		3: {card(rules.Six, rules.Clubs)}, // 打完就離場
 	})
 	openWithClubThree(t, m)
-	mustPlay(t, m, 1, []game.Card{card(game.Four, game.Clubs)})
-	mustPlay(t, m, 2, []game.Card{card(game.Five, game.Clubs)})
-	mustPlay(t, m, 3, []game.Card{card(game.Six, game.Clubs)}) // 座位 3 出完並領先
+	mustPlay(t, m, 1, []rules.Card{card(rules.Four, rules.Clubs)})
+	mustPlay(t, m, 2, []rules.Card{card(rules.Five, rules.Clubs)})
+	mustPlay(t, m, 3, []rules.Card{card(rules.Six, rules.Clubs)}) // 座位 3 出完並領先
 
 	if m.Players[3].Rank != 1 {
 		t.Fatalf("座位 3 應得第一名，實際 %d", m.Players[3].Rank)
@@ -123,7 +123,7 @@ func TestWinnerOfRoundLeavesSuccessionWraps(t *testing.T) {
 		t.Error("脫手後檯面應該清空")
 	}
 	// 座位 0 是新 Round 的首攻，可以自由出牌。
-	mustPlay(t, m, 0, []game.Card{card(game.Nine, game.Clubs), card(game.Nine, game.Diamonds)})
+	mustPlay(t, m, 0, []rules.Card{card(rules.Nine, rules.Clubs), card(rules.Nine, rules.Diamonds)})
 }
 
 // TestSpecialComboBreaksIntoNormalRound 驗證規格第 5 條：
@@ -131,18 +131,18 @@ func TestWinnerOfRoundLeavesSuccessionWraps(t *testing.T) {
 // 這正是規格舉的例子：A 出 88、B 出 JJ、C 用 7777+3 炸掉，之後不能再出 QQ。
 func TestSpecialComboBreaksIntoNormalRound(t *testing.T) {
 	m := newRigged(t)
-	setHands(m, [NumPlayers][]game.Card{
-		0: {game.ClubThree, card(game.Eight, game.Clubs), card(game.Eight, game.Diamonds),
-			card(game.Four, game.Clubs)},
-		1: {card(game.Jack, game.Clubs), card(game.Jack, game.Diamonds),
-			card(game.Queen, game.Clubs), card(game.Queen, game.Diamonds)},
+	setHands(m, [NumPlayers][]rules.Card{
+		0: {rules.ClubThree, card(rules.Eight, rules.Clubs), card(rules.Eight, rules.Diamonds),
+			card(rules.Four, rules.Clubs)},
+		1: {card(rules.Jack, rules.Clubs), card(rules.Jack, rules.Diamonds),
+			card(rules.Queen, rules.Clubs), card(rules.Queen, rules.Diamonds)},
 		// 座位 2 手握鐵支，等著炸掉對子 Round。多留一張牌，
 		// 免得打出鐵支就脫手，那樣 Round 會立刻結束，測不到被炸之後的限制。
-		2: {card(game.Seven, game.Clubs), card(game.Seven, game.Diamonds),
-			card(game.Seven, game.Hearts), card(game.Seven, game.Spades),
-			card(game.Nine, game.Clubs), card(game.Ten, game.Clubs)},
-		3: {card(game.King, game.Clubs), card(game.King, game.Diamonds),
-			card(game.Two, game.Clubs), card(game.Two, game.Diamonds)},
+		2: {card(rules.Seven, rules.Clubs), card(rules.Seven, rules.Diamonds),
+			card(rules.Seven, rules.Hearts), card(rules.Seven, rules.Spades),
+			card(rules.Nine, rules.Clubs), card(rules.Ten, rules.Clubs)},
+		3: {card(rules.King, rules.Clubs), card(rules.King, rules.Diamonds),
+			card(rules.Two, rules.Clubs), card(rules.Two, rules.Diamonds)},
 	})
 
 	// 先用梅花 3 開局，讓大家 PASS 掉，好讓座位 0 自由出對子。
@@ -152,24 +152,24 @@ func TestSpecialComboBreaksIntoNormalRound(t *testing.T) {
 	mustPlay(t, m, 3, nil)
 
 	// 對子 Round 開始。
-	mustPlay(t, m, 0, []game.Card{card(game.Eight, game.Clubs), card(game.Eight, game.Diamonds)})
-	mustPlay(t, m, 1, []game.Card{card(game.Jack, game.Clubs), card(game.Jack, game.Diamonds)})
+	mustPlay(t, m, 0, []rules.Card{card(rules.Eight, rules.Clubs), card(rules.Eight, rules.Diamonds)})
+	mustPlay(t, m, 1, []rules.Card{card(rules.Jack, rules.Clubs), card(rules.Jack, rules.Diamonds)})
 
 	// 座位 2 用鐵支炸掉對子 Round。
-	quad := []game.Card{
-		card(game.Seven, game.Clubs), card(game.Seven, game.Diamonds),
-		card(game.Seven, game.Hearts), card(game.Seven, game.Spades),
-		card(game.Nine, game.Clubs),
+	quad := []rules.Card{
+		card(rules.Seven, rules.Clubs), card(rules.Seven, rules.Diamonds),
+		card(rules.Seven, rules.Hearts), card(rules.Seven, rules.Spades),
+		card(rules.Nine, rules.Clubs),
 	}
 	mustPlay(t, m, 2, quad)
-	if m.Table.Type != game.FourOfAKind {
+	if m.Table.Type != rules.FourOfAKind {
 		t.Fatalf("檯面應該是鐵支，實際 %v", m.Table.Type)
 	}
 
 	// 輪到座位 3：手上有 KK 與 22 兩組對子，但檯面已經是鐵支，都不能出。
-	for _, pair := range [][]game.Card{
-		{card(game.King, game.Clubs), card(game.King, game.Diamonds)},
-		{card(game.Two, game.Clubs), card(game.Two, game.Diamonds)},
+	for _, pair := range [][]rules.Card{
+		{card(rules.King, rules.Clubs), card(rules.King, rules.Diamonds)},
+		{card(rules.Two, rules.Clubs), card(rules.Two, rules.Diamonds)},
 	} {
 		if err := m.Play(3, pair); err != ErrTooSmall {
 			t.Errorf("鐵支檯面上出對子 %v，err = %v, 想要 %v", pair, err, ErrTooSmall)
@@ -187,16 +187,16 @@ func TestSpecialComboBreaksIntoNormalRound(t *testing.T) {
 // TestCannotPlayAfterRanked 驗證已取得名次的玩家不能再出牌。
 func TestCannotPlayAfterRanked(t *testing.T) {
 	m := newRigged(t)
-	setHands(m, [NumPlayers][]game.Card{
-		0: {game.ClubThree},
-		1: {card(game.Four, game.Clubs), card(game.Nine, game.Clubs)},
-		2: {card(game.Five, game.Clubs), card(game.Ten, game.Clubs)},
-		3: {card(game.Six, game.Clubs), card(game.Jack, game.Clubs)},
+	setHands(m, [NumPlayers][]rules.Card{
+		0: {rules.ClubThree},
+		1: {card(rules.Four, rules.Clubs), card(rules.Nine, rules.Clubs)},
+		2: {card(rules.Five, rules.Clubs), card(rules.Ten, rules.Clubs)},
+		3: {card(rules.Six, rules.Clubs), card(rules.Jack, rules.Clubs)},
 	})
 	openWithClubThree(t, m) // 座位 0 出完離場
 
 	// 座位 0 已離場，不論出什麼都該被擋 —— 現在也輪不到他。
-	if err := m.Play(0, []game.Card{card(game.Nine, game.Clubs)}); err != ErrNotYourTurn {
+	if err := m.Play(0, []rules.Card{card(rules.Nine, rules.Clubs)}); err != ErrNotYourTurn {
 		t.Errorf("已離場的玩家出牌 err = %v, 想要 %v", err, ErrNotYourTurn)
 	}
 }
@@ -215,20 +215,20 @@ func TestLegalMovesEmptyWhenNotYourTurn(t *testing.T) {
 // LegalMoves 仍會把可以強壓的鐵支與同花順算進去。
 func TestLegalMovesRespectsSpecialOverride(t *testing.T) {
 	m := newRigged(t)
-	setHands(m, [NumPlayers][]game.Card{
-		0: {game.ClubThree, card(game.Nine, game.Clubs)},
+	setHands(m, [NumPlayers][]rules.Card{
+		0: {rules.ClubThree, card(rules.Nine, rules.Clubs)},
 		// 座位 1 手上有一副鐵支，應該能用來壓單張。
-		1: {card(game.Seven, game.Clubs), card(game.Seven, game.Diamonds),
-			card(game.Seven, game.Hearts), card(game.Seven, game.Spades),
-			card(game.Nine, game.Diamonds)},
-		2: {card(game.Five, game.Clubs), card(game.Ten, game.Clubs)},
-		3: {card(game.Six, game.Clubs), card(game.Jack, game.Clubs)},
+		1: {card(rules.Seven, rules.Clubs), card(rules.Seven, rules.Diamonds),
+			card(rules.Seven, rules.Hearts), card(rules.Seven, rules.Spades),
+			card(rules.Nine, rules.Diamonds)},
+		2: {card(rules.Five, rules.Clubs), card(rules.Ten, rules.Clubs)},
+		3: {card(rules.Six, rules.Clubs), card(rules.Jack, rules.Clubs)},
 	})
 	openWithClubThree(t, m)
 
 	var foundQuad bool
 	for _, mv := range m.LegalMoves(1) {
-		if mv.Type == game.FourOfAKind {
+		if mv.Type == rules.FourOfAKind {
 			foundQuad = true
 		}
 	}
@@ -243,10 +243,10 @@ func TestPlayEmptyHandRejected(t *testing.T) {
 	openWithClubThree(t, m)
 
 	// 座位 1 謊報一組自己沒有的鐵支。
-	fake := []game.Card{
-		card(game.Two, game.Clubs), card(game.Two, game.Diamonds),
-		card(game.Two, game.Hearts), card(game.Two, game.Spades),
-		card(game.Three, game.Diamonds),
+	fake := []rules.Card{
+		card(rules.Two, rules.Clubs), card(rules.Two, rules.Diamonds),
+		card(rules.Two, rules.Hearts), card(rules.Two, rules.Spades),
+		card(rules.Three, rules.Diamonds),
 	}
 	if err := m.Play(1, fake); err != ErrNotYourCards {
 		t.Errorf("出沒有的牌 err = %v, 想要 %v", err, ErrNotYourCards)
@@ -264,7 +264,7 @@ func TestPlayEmptyHandRejected(t *testing.T) {
 func TestDealIsCompleteAndDisjoint(t *testing.T) {
 	m := newRigged(t)
 
-	seen := make(map[game.Card]int)
+	seen := make(map[rules.Card]int)
 	for _, p := range m.Players {
 		if len(p.Hand) != CardsPerHand {
 			t.Errorf("座位 %d 拿到 %d 張，應該是 %d 張", p.Seat, len(p.Hand), CardsPerHand)

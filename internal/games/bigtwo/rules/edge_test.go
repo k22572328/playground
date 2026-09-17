@@ -1,4 +1,4 @@
-package game
+package rules
 
 import (
 	"math/rand"

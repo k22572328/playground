@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"bigTwo/internal/game"
-	"bigTwo/internal/shuffle"
+	"playground/internal/games/bigtwo/rules"
+	"playground/internal/shuffle"
 )
 
 // TestDealIsUnbiased 用真正的洗牌器發很多局，檢查發牌沒有偏差：
@@ -24,7 +24,7 @@ func TestDealIsUnbiased(t *testing.T) {
 	var s shuffle.Crypto
 
 	// seatOf[card][seat] 是某張牌發給某個座位的次數。
-	seatOf := make(map[game.Card][NumPlayers]int, 52)
+	seatOf := make(map[rules.Card][NumPlayers]int, 52)
 	for range runs {
 		m := New(names, s)
 		for _, p := range m.Players {
@@ -94,7 +94,7 @@ func TestDealIsComplete(t *testing.T) {
 	for run := range 200 {
 		m := New(names, s)
 
-		seen := make(map[game.Card]bool, 52)
+		seen := make(map[rules.Card]bool, 52)
 		for _, p := range m.Players {
 			if len(p.Hand) != CardsPerHand {
 				t.Fatalf("第 %d 局：座位 %d 拿到 %d 張", run, p.Seat, len(p.Hand))
@@ -116,7 +116,7 @@ func TestDealIsComplete(t *testing.T) {
 			t.Fatalf("第 %d 局：只發出 %d 張", run, len(seen))
 		}
 		// 持有梅花 3 的人必須先出。
-		if !slices.Contains(m.Players[m.Turn].Hand, game.ClubThree) {
+		if !slices.Contains(m.Players[m.Turn].Hand, rules.ClubThree) {
 			t.Fatalf("第 %d 局：先出牌的座位 %d 手上沒有梅花 3", run, m.Turn)
 		}
 	}

@@ -1,4 +1,4 @@
-module bigTwo
+module playground
 
 go 1.23.4
 

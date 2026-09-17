@@ -1,13 +1,13 @@
-package lobby
+package platform
 
 import (
 	"math/rand"
 	"testing"
 
-	"bigTwo/internal/match"
+	"playground/internal/games/bigtwo/match"
 )
 
-func newLobby() *Lobby { return New(rand.New(rand.NewSource(1))) }
+func newTestLobby() *Lobby { return newLobby(rand.New(rand.NewSource(1))) }
 
 func seat(id, name string) Seat { return Seat{PlayerID: id, Name: name} }
 
@@ -23,7 +23,7 @@ func fill(t *testing.T, l *Lobby, r *Room) *Room {
 }
 
 func TestCreateMakesCreatorHost(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := l.Create("測試房", seat("p1", "A"))
 
 	if !r.IsHost("p1") {
@@ -38,7 +38,7 @@ func TestCreateMakesCreatorHost(t *testing.T) {
 }
 
 func TestListShowsCreatedRooms(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	l.Create("房一", seat("p1", "A"))
 	l.Create("房二", seat("p2", "B"))
 
@@ -48,7 +48,7 @@ func TestListShowsCreatedRooms(t *testing.T) {
 }
 
 func TestJoinUntilFull(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := fill(t, l, l.Create("測試房", seat("p1", "A")))
 
 	if !r.Full() {
@@ -61,7 +61,7 @@ func TestJoinUntilFull(t *testing.T) {
 }
 
 func TestCannotJoinTwice(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := l.Create("測試房", seat("p1", "A"))
 
 	if _, err := l.Join(r.ID, seat("p1", "A")); err != ErrAlreadyJoined {
@@ -70,14 +70,14 @@ func TestCannotJoinTwice(t *testing.T) {
 }
 
 func TestJoinUnknownRoom(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	if _, err := l.Join("ZZZ", seat("p1", "A")); err != ErrRoomNotFound {
 		t.Errorf("err = %v, 想要 %v", err, ErrRoomNotFound)
 	}
 }
 
 func TestHostSuccession(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := l.Create("測試房", seat("p1", "A"))
 	if _, err := l.Join(r.ID, seat("p2", "B")); err != nil {
 		t.Fatalf("Join 失敗: %v", err)
@@ -92,7 +92,7 @@ func TestHostSuccession(t *testing.T) {
 }
 
 func TestEmptyRoomIsDeleted(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := l.Create("測試房", seat("p1", "A"))
 
 	if err := l.Leave(r.ID, "p1"); err != nil {
@@ -104,7 +104,7 @@ func TestEmptyRoomIsDeleted(t *testing.T) {
 }
 
 func TestKick(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := l.Create("測試房", seat("p1", "A"))
 	if _, err := l.Join(r.ID, seat("p2", "B")); err != nil {
 		t.Fatalf("Join 失敗: %v", err)
@@ -128,7 +128,7 @@ func TestKick(t *testing.T) {
 }
 
 func TestStartRequiresFullRoom(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := l.Create("測試房", seat("p1", "A"))
 
 	if _, err := l.Start(r.ID, "p1"); err != ErrNotEnough {
@@ -137,7 +137,7 @@ func TestStartRequiresFullRoom(t *testing.T) {
 }
 
 func TestStartRequiresHost(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := fill(t, l, l.Create("測試房", seat("p1", "A")))
 
 	if _, err := l.Start(r.ID, "p2"); err != ErrNotHost {
@@ -153,7 +153,7 @@ func TestStartShufflesSeats(t *testing.T) {
 
 	shuffled := false
 	for seed := range 50 {
-		l := New(rand.New(rand.NewSource(int64(seed))))
+		l := newLobby(rand.New(rand.NewSource(int64(seed))))
 		r := fill(t, l, l.Create("洗座位", seat("host", "房長")))
 		if _, err := l.Start(r.ID, "host"); err != nil {
 			t.Fatalf("Start 失敗: %v", err)
@@ -189,7 +189,7 @@ func TestStartShufflesSeats(t *testing.T) {
 // 房長是特定的人，不是「坐在座位 0 的人」。
 func TestHostSurvivesSeatShuffle(t *testing.T) {
 	for seed := range 50 {
-		l := New(rand.New(rand.NewSource(int64(seed))))
+		l := newLobby(rand.New(rand.NewSource(int64(seed))))
 		r := fill(t, l, l.Create("洗座位", seat("host", "房長")))
 		if _, err := l.Start(r.ID, "host"); err != nil {
 			t.Fatalf("Start 失敗: %v", err)
@@ -207,7 +207,7 @@ func TestHostSurvivesSeatShuffle(t *testing.T) {
 }
 
 func TestStartDealsMatch(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	r := fill(t, l, l.Create("測試房", seat("p1", "A")))
 
 	m, err := l.Start(r.ID, "p1")
@@ -236,7 +236,7 @@ func TestStartDealsMatch(t *testing.T) {
 
 // TestRoomIDsAreUnique 確認房號不會撞號。
 func TestRoomIDsAreUnique(t *testing.T) {
-	l := newLobby()
+	l := newTestLobby()
 	seen := make(map[string]bool)
 	for i := range 200 {
 		r := l.Create("房", seat("p", "A"))

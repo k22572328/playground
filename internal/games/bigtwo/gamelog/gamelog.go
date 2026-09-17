@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"bigTwo/internal/game"
-	"bigTwo/internal/match"
+	"playground/internal/games/bigtwo/match"
+	"playground/internal/games/bigtwo/rules"
 )
 
 // Recorder 把一局牌的事件寫進一個紀錄檔，滿足 match.Observer。
@@ -107,7 +107,7 @@ func (r *Recorder) stamp() string {
 }
 
 // Dealt 記錄發牌結果與誰先出。
-func (r *Recorder) Dealt(hands [match.NumPlayers][]game.Card, first int) {
+func (r *Recorder) Dealt(hands [match.NumPlayers][]rules.Card, first int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -125,7 +125,7 @@ func (r *Recorder) Dealt(hands [match.NumPlayers][]game.Card, first int) {
 }
 
 // Played 記錄一次成功的出牌。
-func (r *Recorder) Played(seat int, combo game.Combo, rank int) {
+func (r *Recorder) Played(seat int, combo rules.Combo, rank int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -185,7 +185,7 @@ func (r *Recorder) Finished(ranks []int) {
 }
 
 // cards 把一組牌寫成「3♣ 8♦ K♠」這種形式。
-func cards(cs []game.Card) string {
+func cards(cs []rules.Card) string {
 	if len(cs) == 0 {
 		return "（無）"
 	}

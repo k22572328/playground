@@ -1,14 +1,14 @@
 // Package lobby 管理房間的生命週期：建立、加入、離開、踢人與開始遊戲。
 // 它只認識 match 層，不碰任何 HTTP 或連線細節。
-package lobby
+package platform
 
 import (
 	"errors"
 	"sync"
 	"time"
 
-	"bigTwo/internal/game"
-	"bigTwo/internal/match"
+	"playground/internal/games/bigtwo/match"
+	"playground/internal/games/bigtwo/rules"
 )
 
 var (
@@ -107,13 +107,13 @@ type Lobby struct {
 }
 
 // New 建立一個空的大廳，不產生牌局紀錄。
-func New(s match.Shuffler) *Lobby {
+func newLobby(s match.Shuffler) *Lobby {
 	return &Lobby{rooms: make(map[string]*Room), shuffler: s}
 }
 
 // NewWithRecorder 建立一個會把每局牌寫成紀錄檔的大廳。
-func NewWithRecorder(s match.Shuffler, nr NewRecorder) *Lobby {
-	l := New(s)
+func newLobbyWithRecorder(s match.Shuffler, nr NewRecorder) *Lobby {
+	l := newLobby(s)
 	l.newRecorder = nr
 	return l
 }
@@ -381,7 +381,7 @@ func (l *Lobby) Start(roomID, hostID string) (*match.Match, error) {
 
 // PlayInRoom 在房間的牌局裡替 playerID 出牌；cards 為空代表 PASS。
 // 出牌會改動牌局狀態，所以和其他讀取一樣要在 Lobby 的鎖內進行。
-func (l *Lobby) PlayInRoom(roomID, playerID string, cards []game.Card) error {
+func (l *Lobby) PlayInRoom(roomID, playerID string, cards []rules.Card) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 

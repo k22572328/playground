@@ -1,9 +1,7 @@
-package server
+package platform
 
 import (
 	"sync"
-
-	"bigTwo/internal/lobby"
 )
 
 // client 一條連線。每位玩家一條，斷線即移除。
@@ -58,10 +56,10 @@ func (c *client) deliver(msg outbound) bool {
 type hub struct {
 	mu      sync.RWMutex
 	clients map[string]*client // playerID -> 連線
-	lobby   *lobby.Lobby
+	lobby   *Lobby
 }
 
-func newHub(l *lobby.Lobby) *hub {
+func newHub(l *Lobby) *hub {
 	return &hub{clients: make(map[string]*client), lobby: l}
 }
 
@@ -100,7 +98,7 @@ func (h *hub) remove(c *client) {
 	// 遊戲進行中就替他保留座位，等他在寬限期內回來；
 	// 還沒開局的話留著也沒意義，直接讓他離開房間。
 	inProgress := false
-	_ = h.lobby.Read(roomID, func(r *lobby.Room) { inProgress = r.Started })
+	_ = h.lobby.Read(roomID, func(r *Room) { inProgress = r.Started })
 
 	if inProgress {
 		h.lobby.MarkOffline(roomID, c.playerID)
@@ -204,7 +202,7 @@ func (h *hub) broadcastLobby() {
 	}
 
 	views := make([][]roomView, len(watchers))
-	h.lobby.ReadAll(func(r *lobby.Room) {
+	h.lobby.ReadAll(func(r *Room) {
 		for i, c := range watchers {
 			views[i] = append(views[i], newRoomView(r, c.playerID))
 		}
@@ -224,7 +222,7 @@ func (h *hub) broadcastRoom(roomID string) {
 	}
 
 	msgs := make([]outbound, len(members))
-	err := h.lobby.Read(roomID, func(r *lobby.Room) {
+	err := h.lobby.Read(roomID, func(r *Room) {
 		for i, c := range members {
 			msgs[i] = outbound{Type: msgRoom, Room: ptr(newRoomView(r, c.playerID))}
 			if r.Started {

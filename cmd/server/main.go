@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"bigTwo/internal/server"
+	"playground/internal/platform"
 )
 
 func main() {
@@ -38,8 +38,8 @@ func main() {
 
 // newServer 依參數組出伺服器。指定了外部前端目錄就先確認它真的存在，
 // 否則寧可啟動失敗，也不要默默跑出一台每頁都 404 的伺服器。
-func newServer(webRoot, logDir string) *server.Server {
-	opts := server.Options{LogDir: logDir}
+func newServer(webRoot, logDir string) *platform.Server {
+	opts := platform.Options{LogDir: logDir}
 
 	if webRoot != "" {
 		if _, err := os.Stat(filepath.Join(webRoot, "index.html")); err != nil {
@@ -58,5 +58,5 @@ func newServer(webRoot, logDir string) *server.Server {
 		}
 		log.Printf("牌局紀錄將寫入：%s", logDir)
 	}
-	return server.NewWithOptions(opts)
+	return platform.NewWithOptions(opts)
 }

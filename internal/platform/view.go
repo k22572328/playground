@@ -1,9 +1,8 @@
-package server
+package platform
 
 import (
-	"bigTwo/internal/game"
-	"bigTwo/internal/lobby"
-	"bigTwo/internal/match"
+	"playground/internal/games/bigtwo/match"
+	"playground/internal/games/bigtwo/rules"
 )
 
 // 這個檔案定義送給前端的資料形狀。關鍵原則：每位玩家只看得到自己的手牌，
@@ -16,11 +15,11 @@ type cardView struct {
 	Text string `json:"text"` // 例如 "3♣"，方便除錯與無障礙讀出
 }
 
-func newCardView(c game.Card) cardView {
+func newCardView(c rules.Card) cardView {
 	return cardView{Rank: int(c.Rank), Suit: int(c.Suit), Text: c.String()}
 }
 
-func newCardViews(cards []game.Card) []cardView {
+func newCardViews(cards []rules.Card) []cardView {
 	out := make([]cardView, len(cards))
 	for i, c := range cards {
 		out[i] = newCardView(c)
@@ -34,7 +33,7 @@ type comboView struct {
 	Cards []cardView `json:"cards"`
 }
 
-func newComboView(c *game.Combo) *comboView {
+func newComboView(c *rules.Combo) *comboView {
 	if c == nil {
 		return nil
 	}
@@ -124,7 +123,7 @@ func newMatchView(m *match.Match, viewer int) *matchView {
 // 斷線是房間層的概念（座位替誰保留著），牌局本身並不知道，
 // 所以由這裡合併：標出誰斷線、列出在等誰，並在有人斷線時
 // 停掉出牌與 PASS —— 牌局在那段期間是暫停的。
-func markOffline(v *matchView, r *lobby.Room) {
+func markOffline(v *matchView, r *Room) {
 	if v == nil {
 		return
 	}
@@ -162,7 +161,7 @@ type slotView struct {
 	Offline  bool   `json:"offline"`
 }
 
-func newRoomView(r *lobby.Room, viewerID string) roomView {
+func newRoomView(r *Room, viewerID string) roomView {
 	v := roomView{
 		ID:         r.ID,
 		Name:       r.Name,

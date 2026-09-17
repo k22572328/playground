@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sort"
 
-	"bigTwo/internal/game"
+	"playground/internal/games/bigtwo/rules"
 )
 
 const (
@@ -31,7 +31,7 @@ var (
 type Player struct {
 	Seat int
 	Name string
-	Hand []game.Card
+	Hand []rules.Card
 
 	// Rank 是名次 1~4；0 表示還沒排出名次。
 	Rank int
@@ -52,7 +52,7 @@ type Match struct {
 	Turn int
 
 	// Table 是檯面上待壓的牌；nil 代表目前是自由出牌。
-	Table *game.Combo
+	Table *rules.Combo
 
 	// leader 是打出檯面這手牌的座位，Round 結束時由他取得下個 Round 首攻。
 	leader int
@@ -70,19 +70,19 @@ type Match struct {
 
 // Event 一次出牌或 PASS 的紀錄。
 type Event struct {
-	Seat  int         `json:"seat"`
-	Combo *game.Combo `json:"combo"` // nil 表示 PASS
-	Rank  int         `json:"rank"`  // 非 0 表示這手打完後取得的名次
+	Seat  int          `json:"seat"`
+	Combo *rules.Combo `json:"combo"` // nil 表示 PASS
+	Rank  int          `json:"rank"`  // 非 0 表示這手打完後取得的名次
 }
 
 // Observer 接收一局之中的每個重要事件。所有方法都在 Match 的操作過程中
 // 同步呼叫，實作者不應該阻塞太久，也不該回頭呼叫 Match。
 type Observer interface {
 	// Dealt 在發完牌時呼叫，hands 依座位順序給出每家的初始手牌。
-	Dealt(hands [NumPlayers][]game.Card, first int)
+	Dealt(hands [NumPlayers][]rules.Card, first int)
 
 	// Played 在成功出牌後呼叫。rank 非 0 表示這手打完後取得名次。
-	Played(seat int, combo game.Combo, rank int)
+	Played(seat int, combo rules.Combo, rank int)
 
 	// Passed 在玩家 PASS 後呼叫。
 	Passed(seat int)
@@ -108,20 +108,20 @@ func New(names [NumPlayers]string, s Shuffler) *Match {
 // NewWithObserver 與 New 相同，但額外把每個事件通知 obs，用來寫牌局紀錄。
 // obs 為 nil 時不做任何通知。
 func NewWithObserver(names [NumPlayers]string, s Shuffler, obs Observer) *Match {
-	deck := game.NewDeck()
+	deck := rules.NewDeck()
 	s.Shuffle(len(deck), func(i, j int) { deck[i], deck[j] = deck[j], deck[i] })
 
 	m := &Match{leader: none, nextRank: 1, observer: obs}
-	var dealt [NumPlayers][]game.Card
+	var dealt [NumPlayers][]rules.Card
 	for seat := range m.Players {
 		h := deck[seat*CardsPerHand : (seat+1)*CardsPerHand]
 		sort.Slice(h, func(a, b int) bool { return h[a].Less(h[b]) })
 		m.Players[seat] = &Player{Seat: seat, Name: names[seat], Hand: h}
-		if slices.Contains(h, game.ClubThree) {
+		if slices.Contains(h, rules.ClubThree) {
 			m.Turn = seat
 		}
 		// 交給觀察者的是複本，之後出牌不會動到紀錄裡的初始手牌。
-		dealt[seat] = append([]game.Card(nil), h...)
+		dealt[seat] = append([]rules.Card(nil), h...)
 	}
 
 	if obs != nil {
@@ -153,7 +153,7 @@ func (m *Match) Rankings() []*Player {
 func (m *Match) isOpening() bool { return m.leader == none }
 
 // Play 讓 seat 打出 cards；cards 為空代表 PASS。
-func (m *Match) Play(seat int, cards []game.Card) error {
+func (m *Match) Play(seat int, cards []rules.Card) error {
 	if m.Over() {
 		return ErrMatchOver
 	}
@@ -164,7 +164,7 @@ func (m *Match) Play(seat int, cards []game.Card) error {
 		return m.pass(seat)
 	}
 
-	combo, err := game.NewCombo(cards)
+	combo, err := rules.NewCombo(cards)
 	if err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func (m *Match) Play(seat int, cards []game.Card) error {
 	}
 
 	p := m.Players[seat]
-	p.Hand = slices.DeleteFunc(p.Hand, func(c game.Card) bool { return combo.Contains(c) })
+	p.Hand = slices.DeleteFunc(p.Hand, func(c rules.Card) bool { return combo.Contains(c) })
 	m.Table = &combo
 	m.leader = seat
 
@@ -213,12 +213,12 @@ func (m *Match) notifyFinished() {
 }
 
 // validate 檢查這組牌在目前狀態下能不能打出去。
-func (m *Match) validate(seat int, combo game.Combo) error {
+func (m *Match) validate(seat int, combo rules.Combo) error {
 	if !m.holdsAll(seat, combo.Cards) {
 		return ErrNotYourCards
 	}
 	// 整局的第一手必須把梅花 3 打出去，之後就沒有這個限制。
-	if m.isOpening() && !combo.Contains(game.ClubThree) {
+	if m.isOpening() && !combo.Contains(rules.ClubThree) {
 		return ErrMustPlayClub3
 	}
 	if m.Table != nil && !combo.Beats(*m.Table) {
@@ -318,7 +318,7 @@ func (m *Match) endRound() {
 }
 
 // holdsAll 回報 seat 手上是否真的有這些牌。
-func (m *Match) holdsAll(seat int, cards []game.Card) bool {
+func (m *Match) holdsAll(seat int, cards []rules.Card) bool {
 	for _, c := range cards {
 		if !slices.Contains(m.Players[seat].Hand, c) {
 			return false
@@ -329,17 +329,17 @@ func (m *Match) holdsAll(seat int, cards []game.Card) bool {
 
 // LegalMoves 列出 seat 現在所有打得出去的牌組，供提示與電腦玩家使用。
 // 回傳的每一組都保證能通過 Play 的驗證。
-func (m *Match) LegalMoves(seat int) []game.Combo {
+func (m *Match) LegalMoves(seat int) []rules.Combo {
 	if m.Over() || seat != m.Turn {
 		return nil
 	}
-	var moves []game.Combo
-	scratch := make([]game.Card, 5) // 五張是最長的牌型，一個緩衝區夠用
+	var moves []rules.Combo
+	scratch := make([]rules.Card, 5) // 五張是最長的牌型，一個緩衝區夠用
 	for _, size := range m.playableSizes() {
-		m.eachCombination(m.Players[seat].Hand, size, func(cards []game.Card) {
+		m.eachCombination(m.Players[seat].Hand, size, func(cards []rules.Card) {
 			// 絕大多數候選都會被打回票，所以先用共用緩衝區判斷，
 			// 確定留下來時才複製一份給 Combo 自己保管。
-			combo, err := game.NewComboInto(scratch[:size], cards)
+			combo, err := rules.NewComboInto(scratch[:size], cards)
 			if err != nil {
 				return
 			}
@@ -370,12 +370,12 @@ func (m *Match) playableSizes() []int {
 
 // eachCombination 依序把手牌中每個 size 張的組合交給 fn。
 // 傳給 fn 的 slice 會被重複使用，需要保留內容的呼叫端必須自行複製；
-// game.NewCombo 本身就會複製一份，所以這裡可以安全共用緩衝區。
-func (m *Match) eachCombination(hand []game.Card, size int, fn func([]game.Card)) {
+// rules.NewCombo 本身就會複製一份，所以這裡可以安全共用緩衝區。
+func (m *Match) eachCombination(hand []rules.Card, size int, fn func([]rules.Card)) {
 	if size > len(hand) {
 		return
 	}
-	buf := make([]game.Card, size)
+	buf := make([]rules.Card, size)
 	var build func(start, depth int)
 	build = func(start, depth int) {
 		if depth == size {
