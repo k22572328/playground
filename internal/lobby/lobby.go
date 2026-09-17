@@ -4,7 +4,6 @@ package lobby
 
 import (
 	"errors"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -30,7 +29,8 @@ type Seat struct {
 	Name     string `json:"name"`
 }
 
-// Room 一個房間。房長是座位 0 的人；房長離開時由下一位遞補。
+// Room 一個房間。房長由 hostID 指定，離開時交給剩下的第一位；
+// 座位順序在開局時會重洗，所以不能用座位序來認定房長。
 type Room struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -66,7 +66,7 @@ func (r *Room) IsHost(playerID string) bool {
 func (r *Room) Full() bool { return len(r.Seats) >= match.NumPlayers }
 
 // SeatOf 回報 playerID 在牌局中的座位；不在房裡則回傳 -1。
-// 座位順序就是房間裡的排列順序，開始遊戲後不再變動。
+// 座位在開局時洗過一次，之後整局不再變動。
 func (r *Room) SeatOf(playerID string) int { return r.indexOf(playerID) }
 
 // indexOf 找出 playerID 在房裡的座位序，不在則回傳 -1。
@@ -94,21 +94,21 @@ type Lobby struct {
 	rooms  map[string]*Room
 	nextID int
 
-	// rng 供發牌使用；集中在這裡以便測試注入固定亂數。
-	rng *rand.Rand
+	// shuffler 供發牌與排座位使用；抽成介面是為了讓測試注入固定序列。
+	shuffler match.Shuffler
 
 	// newRecorder 在開局時建立紀錄檔；nil 表示不記錄。
 	newRecorder NewRecorder
 }
 
 // New 建立一個空的大廳，不產生牌局紀錄。
-func New(rng *rand.Rand) *Lobby {
-	return &Lobby{rooms: make(map[string]*Room), rng: rng}
+func New(s match.Shuffler) *Lobby {
+	return &Lobby{rooms: make(map[string]*Room), shuffler: s}
 }
 
 // NewWithRecorder 建立一個會把每局牌寫成紀錄檔的大廳。
-func NewWithRecorder(rng *rand.Rand, nr NewRecorder) *Lobby {
-	l := New(rng)
+func NewWithRecorder(s match.Shuffler, nr NewRecorder) *Lobby {
+	l := New(s)
 	l.newRecorder = nr
 	return l
 }
@@ -165,7 +165,7 @@ func (l *Lobby) ReadAll(fn func(r *Room)) {
 	}
 }
 
-// Create 建立房間，建立者自動成為房長並坐進座位 0。
+// Create 建立房間，建立者自動成為房長。
 func (l *Lobby) Create(name string, host Seat) *Room {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -286,7 +286,7 @@ func (l *Lobby) Start(roomID, hostID string) (*match.Match, error) {
 
 	// 開局時重新洗座位，這樣誰坐哪不會由進房順序決定 ——
 	// 房長也就沒有「先進來就固定坐在誰的上家」這種優勢。
-	l.rng.Shuffle(len(r.Seats), func(i, j int) {
+	l.shuffler.Shuffle(len(r.Seats), func(i, j int) {
 		r.Seats[i], r.Seats[j] = r.Seats[j], r.Seats[i]
 	})
 
@@ -302,7 +302,7 @@ func (l *Lobby) Start(roomID, hostID string) (*match.Match, error) {
 		obs = r.recorder
 	}
 
-	r.Match = match.NewWithObserver(names, l.rng, obs)
+	r.Match = match.NewWithObserver(names, l.shuffler, obs)
 	r.Started = true
 	return r.Match, nil
 }

@@ -26,6 +26,7 @@ game  ←  match  ←  lobby  ←  server  ←  cmd/server
 - `internal/match`：一局的流程。Round、PASS 資格、名次、順位。
 - `internal/lobby`：房間管理。**所有會改動 Match 的操作都要走這一層**，
   因為它持有保護共用狀態的鎖。
+- `internal/shuffle`：發牌與排座位用的洗牌器。
 - `internal/gamelog`：把一局牌寫成人看得懂的紀錄檔，實作 `match.Observer`。
 - `internal/server`：WebSocket 與資料視圖。唯一認識 HTTP 的一層。
 - `web`：前端靜態檔，並用 `go:embed` 把它們編進執行檔。
@@ -77,6 +78,19 @@ GO111MODULE=on go test -race -short ./...  # 改 server/lobby 後必跑
 所以**某一瞬間四個人看到的輪次可能不一致**。挑「現在輪到誰」時必須等到
 四個視角一致（`currentActor` 會檢查），否則會挑到一個早就過了回合的玩家而卡死。
 同理，`currentActor` 回傳 -1 不代表牌局結束，要另外用 `allFinished` 判斷。
+
+## 洗牌
+
+發牌與排座位用 `internal/shuffle` 的 `Crypto`，它以 `crypto/rand` 為亂數來源。
+**不要改回 `math/rand`**：以時間當種子的話，知道伺服器啟動時間就能推算出
+後續所有牌局；而且 `*rand.Rand` 併發使用會有資料競爭（`Crypto` 沒有可變狀態）。
+
+洗牌一定要用 Fisher–Yates —— 由後往前，交換對象只從**尚未定案的** `[0, i]`
+裡挑。看似等價的「每張牌都跟任意位置交換」會產生明顯偏差（4 張牌時最常見的
+排列約是最罕見的 1.9 倍），`TestNaiveShuffleWouldBeBiased` 把這個差異釘住了。
+取隨機數用 `randBelow`，它以拒絕取樣避免 `% n` 造成的模數偏差。
+
+測試要重現固定牌局時用 `shuffle.Seeded(seed)`。
 
 ## 牌局紀錄
 

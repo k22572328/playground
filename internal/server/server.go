@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io/fs"
 	"log"
-	"math/rand"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -18,6 +17,7 @@ import (
 	"bigTwo/internal/gamelog"
 	"bigTwo/internal/lobby"
 	"bigTwo/internal/match"
+	"bigTwo/internal/shuffle"
 	"bigTwo/web"
 )
 
@@ -68,10 +68,12 @@ func NewWithOptions(opts Options) *Server {
 		webFS = web.FS()
 	}
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	l := lobby.New(rng)
+	// 用 crypto/rand 洗牌：玩家不該能從先前的牌局推算出後續的發牌，
+	// 而且它沒有共用狀態，多個房間同時發牌也安全。
+	var shuffler shuffle.Crypto
+	l := lobby.New(shuffler)
 	if opts.LogDir != "" {
-		l = lobby.NewWithRecorder(rng, recorderFactory(opts.LogDir))
+		l = lobby.NewWithRecorder(shuffler, recorderFactory(opts.LogDir))
 	}
 
 	return &Server{
