@@ -100,6 +100,71 @@ func TestNameWithOnlyWhitespaceRejected(t *testing.T) {
 	}
 }
 
+// TestUnnamedClientsGetNoLobbyPush 重現這個情境：開四個視窗都停在首頁，
+// 只有其中一個輸入暱稱，結果四個視窗全都跳進大廳 —— 另外三個還沒取名。
+//
+// 原因是大廳廣播只看「不在房間裡」，把還在首頁的人也算成大廳的人。
+// 修正後，沒取名的連線不該收到任何大廳推播。
+func TestUnnamedClientsGetNoLobbyPush(t *testing.T) {
+	ts := newTestServer(t)
+
+	// 四個視窗都連上，但都還沒取名。
+	windows := make([]*testClient, 4)
+	for i := range windows {
+		windows[i] = dial(t, ts)
+	}
+
+	// 只有第一個視窗輸入暱稱，他自己該收到大廳。
+	windows[0].send(inbound{Action: actSetName, Name: "阿明"})
+	windows[0].readUntil(msgLobby)
+
+	// 再讓第二個視窗也取名，確保大廳確實廣播了好幾次 ——
+	// 這樣若廣播對象算錯，未取名的視窗一定會收到東西。
+	windows[1].send(inbound{Action: actSetName, Name: "小華"})
+	windows[1].readUntil(msgLobby)
+
+	// 剩下兩個從頭到尾沒取名，不該收到任何推播。
+	// tryRead 逾時會讓連線報廢，所以每條連線只檢查一次。
+	for i, w := range windows[2:] {
+		if msg, ok := w.tryRead(300 * time.Millisecond); ok {
+			t.Errorf("視窗 %d 還沒取名卻收到了 %q 訊息，畫面會被推進大廳",
+				i+2, msg.Type)
+		}
+	}
+}
+
+// TestNamingBroadcastsToOtherLobbyUsers 驗證修正沒有矯枉過正：
+// 已經在大廳的人仍該收到房間列表更新。
+func TestNamingBroadcastsToOtherLobbyUsers(t *testing.T) {
+	ts := newTestServer(t)
+
+	watcher := dial(t, ts)
+	watcher.setName("旁觀者") // 已在大廳
+
+	// 另一個人取名並開房，旁觀者應該看到新房間出現。
+	host := dial(t, ts)
+	host.setName("房長")
+	host.send(inbound{Action: actCreateRoom, Name: "新房間"})
+
+	// 對方取名與開房各會觸發一次廣播，新房間出現在後者，
+	// 所以要一直讀到看見它為止。
+	found := false
+	for range 5 {
+		msg := watcher.readUntil(msgLobby)
+		for _, r := range msg.Rooms {
+			if r.Name == "新房間" {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Error("大廳裡的人應該看到別人新開的房間")
+	}
+}
+
 // TestDoubleJoinRejected 驗證同一個人不能重複加入同一間房。
 func TestDoubleJoinRejected(t *testing.T) {
 	ts := newTestServer(t)

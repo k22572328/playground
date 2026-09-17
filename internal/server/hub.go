@@ -158,14 +158,18 @@ func (h *hub) membersOf(roomID string) []*client {
 	return out
 }
 
-// lobbyWatchers 列出所有還在大廳（不在任何房間）的連線。
+// lobbyWatchers 列出目前人在大廳的連線。
+//
+// 「在大廳」需要同時滿足兩件事：不在任何房間裡，而且已經取好暱稱。
+// 少了後者，剛連上、還停在首頁輸入名字的人也會收到大廳推播，
+// 前端一收到就切畫面，結果整桌人被別人取名字的動作一起拖進大廳。
 func (h *hub) lobbyWatchers() []*client {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	var out []*client
 	for _, c := range h.clients {
-		if c.roomID == "" {
+		if c.roomID == "" && c.name != "" {
 			out = append(out, c)
 		}
 	}

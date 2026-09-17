@@ -58,6 +58,22 @@ func (c *testClient) read() outbound {
 	return msg
 }
 
+// tryRead 等最多 wait 這麼久看有沒有訊息進來，回報是否收到。
+// 用來驗證「不該收到任何東西」，所以逾時不算失敗。
+//
+// 注意：WebSocket 讀取一旦逾時，這條連線就不能再用了，
+// 所以只在測試的最後階段對該連線呼叫它。
+func (c *testClient) tryRead(wait time.Duration) (outbound, bool) {
+	c.t.Helper()
+	_ = c.conn.SetReadDeadline(time.Now().Add(wait))
+
+	var msg outbound
+	if err := c.conn.ReadJSON(&msg); err != nil {
+		return outbound{}, false
+	}
+	return msg, true
+}
+
 // readUntil 一直讀到指定類型的訊息為止，中途的其他訊息會被略過。
 // 伺服器常常連續推播多則（例如同時更新房間與大廳），測試只關心其中一則；
 // 別人的動作也會推播大廳更新過來，所以容許量要夠寬。
