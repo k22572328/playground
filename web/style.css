@@ -71,6 +71,15 @@ body {
   margin-bottom: 20px;
 }
 
+select {
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--paper);
+  background: rgba(0, 0, 0, .35);
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: var(--radius);
+}
+
 input[type="text"] {
   flex: 1 1 180px;
   min-width: 0;

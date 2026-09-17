@@ -7,7 +7,7 @@ import (
 	"io/fs"
 )
 
-//go:embed index.html style.css app.js
+//go:embed index.html style.css app.js games
 var files embed.FS
 
 // FS 回傳內嵌的前端檔案。

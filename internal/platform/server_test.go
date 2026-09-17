@@ -158,10 +158,12 @@ func TestStaticFilesServed(t *testing.T) {
 	ts := newTestServer(t)
 
 	for _, tc := range []struct{ path, wantType, wantBody string }{
-		{"/", "text/html", "<title>大老二</title>"},
-		{"/index.html", "text/html", "<title>大老二</title>"},
+		{"/", "text/html", "<title>Playground</title>"},
+		{"/index.html", "text/html", "<title>Playground</title>"},
 		{"/app.js", "javascript", "WebSocket"},
 		{"/style.css", "text/css", ".card"},
+		// 各遊戲的畫面模組也要供應得出來。
+		{"/games/bigtwo/table.js", "javascript", "registerGame"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			resp, err := http.Get(ts.URL + tc.path)

@@ -8,6 +8,14 @@ type roomView struct {
 	Started bool       `json:"started"`
 	Full    bool       `json:"full"`
 
+	// KindID 讓前端知道要載入哪個遊戲的畫面；GameName 供顯示。
+	KindID   string `json:"kindId"`
+	GameName string `json:"gameName"`
+	MaxSeats int    `json:"maxSeats"`
+
+	// CanStart 表示目前人數足以開局。
+	CanStart bool `json:"canStart"`
+
 	// YouAreHost 讓前端決定要不要顯示踢人與開始按鈕。
 	YouAreHost bool `json:"youAreHost"`
 }
@@ -28,8 +36,14 @@ func newRoomView(r *Room, viewerID string) roomView {
 		Name:       r.Name,
 		Started:    r.Started,
 		Full:       r.Full(),
+		KindID:     r.KindID,
+		CanStart:   r.CanStart(),
 		YouAreHost: r.IsHost(viewerID),
 		Seats:      make([]slotView, 0, len(r.Seats)),
+	}
+	if k, ok := r.Kind(); ok {
+		v.GameName = k.Name
+		v.MaxSeats = k.MaxSeats
 	}
 	for _, s := range r.Seats {
 		v.Seats = append(v.Seats, slotView{

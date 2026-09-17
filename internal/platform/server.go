@@ -171,7 +171,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	// welcome 必須是這條連線收到的第一則訊息，所以搶在 hub.add 之前放進佇列：
 	// 一旦登記進 hub，其他 goroutine 的廣播就可能先擠進來。
-	c.deliver(outbound{Type: msgWelcome, PlayerID: c.playerID, Token: sess.token})
+	c.deliver(outbound{Type: msgWelcome, PlayerID: c.playerID, Token: sess.token, Games: gameInfos()})
 	s.hub.add(c)
 
 	go s.writeLoop(conn, c)

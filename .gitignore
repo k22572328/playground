@@ -1,7 +1,10 @@
-# 編譯產物。不限定在根目錄，因為執行檔常被編在 cmd/server/ 底下。
-# 這裡只列實際會產生的檔名，避免 "server" 這種通用字誤擋到原始碼目錄。
-bigtwo
-core
+# 編譯產物。一律加上開頭的斜線綁在根目錄，否則 git 會把規則套到每一層，
+# 連 internal/games/bigtwo/ 與 web/games/bigtwo/ 這種原始碼目錄都會被吃掉。
+# cmd/server/ 底下的執行檔另外列出來。
+/bigtwo
+/cmd/server/bigtwo
+/core
+/cmd/server/core
 *.exe
 
 # 測試與分析

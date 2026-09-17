@@ -52,6 +52,7 @@ type outbound struct {
 
 	PlayerID string     `json:"playerId,omitempty"` // welcome 用
 	Token    string     `json:"token,omitempty"`    // welcome 用：存起來供重連
+	Games    []gameInfo `json:"games,omitempty"`    // welcome 用：可以開哪些遊戲
 	Rooms    []roomView `json:"rooms,omitempty"`    // lobby 用
 	Room     *roomView  `json:"room,omitempty"`     // room 用
 	Game     any        `json:"game,omitempty"`     // room 用，遊戲開始後才有；內容由該遊戲決定
@@ -61,4 +62,24 @@ type outbound struct {
 // errorMsg 包裝一則錯誤訊息。
 func errorMsg(err error) outbound {
 	return outbound{Type: msgError, Message: err.Error()}
+}
+
+// gameInfo 告訴前端有哪些遊戲可以開，以及各自需要幾個人。
+type gameInfo struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	MinSeats int    `json:"minSeats"`
+	MaxSeats int    `json:"maxSeats"`
+}
+
+// gameInfos 把已註冊的遊戲整理成前端要的形狀。
+func gameInfos() []gameInfo {
+	ks := Kinds()
+	out := make([]gameInfo, 0, len(ks))
+	for _, k := range ks {
+		out = append(out, gameInfo{
+			ID: k.ID, Name: k.Name, MinSeats: k.MinSeats, MaxSeats: k.MaxSeats,
+		})
+	}
+	return out
 }

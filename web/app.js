@@ -1,12 +1,9 @@
-// 大老二前端。狀態全部由伺服器推播決定，這裡只負責顯示與送出動作。
+// Playground 平台前端。
+//
+// 這裡只管所有遊戲共通的事：連線、身分、登入、大廳、房間。
+// 一局遊戲長什麼樣、怎麼操作，是各遊戲自己的模組負責（web/games/<id>/），
+// 它們透過 Playground.registerGame 掛進來。
 'use strict';
-
-// ---------- 常數 ----------
-
-// 與後端 game.Rank / game.Suit 的數值順序一致。
-const RANK_TEXT = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2'];
-const SUIT_TEXT = ['♣', '♦', '♥', '♠'];
-const RED_SUITS = new Set([1, 2]); // 方塊與紅心印紅色
 
 // ---------- 取得元素 ----------
 
@@ -25,6 +22,7 @@ const el = {
   lobbyMe: $('lobby-me'),
   createForm: $('create-form'),
   roomNameInput: $('room-name-input'),
+  gameSelect: $('game-select'),
   roomList: $('room-list'),
   lobbyEmpty: $('lobby-empty'),
   roomTitle: $('room-title'),
@@ -32,17 +30,6 @@ const el = {
   leaveBtn: $('leave-btn'),
   startBtn: $('start-btn'),
   startHint: $('start-hint'),
-  opponents: $('opponents'),
-  tableLabel: $('table-label'),
-  tableCards: $('table-cards'),
-  myStatus: $('my-status'),
-  myHand: $('my-hand'),
-  playBtn: $('play-btn'),
-  passBtn: $('pass-btn'),
-  clearBtn: $('clear-btn'),
-  result: $('result'),
-  resultList: $('result-list'),
-  resultClose: $('result-close'),
   toast: $('toast'),
 };
 
@@ -52,10 +39,9 @@ const state = {
   ws: null,
   playerID: '',
   name: '',
-  room: null,     // 目前所在房間的 roomView
-  match: null,    // 目前牌局的 matchView
-  selected: [],   // 選取的牌，元素為 {rank, suit}
-  resultShown: false,
+  room: null,      // 目前所在房間的 roomView
+  games: [],       // 伺服器說有哪些遊戲可以開
+  activeGame: '',  // 目前掛載中的遊戲模組 ID
 
   // resuming 表示這次連上之後要先試著接回先前的身分，
   // 在拿到結果之前不要把畫面切到首頁。
@@ -140,6 +126,8 @@ function handle(msg) {
   switch (msg.type) {
     case 'welcome': {
       state.playerID = msg.playerId;
+      state.games = msg.games || [];
+      renderGameChoices();
 
       // 先把舊 token 留著再存新的：伺服器每次連線都發一組新的，
       // 但要接回身分得用舊的那組。
@@ -222,7 +210,7 @@ function renderLobby(rooms) {
     name.textContent = room.name;
     const meta = document.createElement('div');
     meta.className = 'room-meta';
-    meta.textContent = `${room.seats.length} / 4 人`;
+    meta.textContent = `${room.gameName} ・ ${room.seats.length} / ${room.maxSeats} 人`;
     info.append(name, meta);
 
     const action = document.createElement('div');
@@ -255,11 +243,12 @@ function renderRoom() {
   const room = state.room;
   if (!room) return;
 
-  el.roomTitle.textContent = `${room.name}（房號 ${room.id}）`;
+  el.roomTitle.textContent = `${room.name}・${room.gameName}（房號 ${room.id}）`;
   el.seatList.replaceChildren();
 
-  // 四個位子都畫出來，空位也要顯示，才看得出還缺幾人。
-  for (let i = 0; i < 4; i++) {
+  // 連空位一起畫出來，才看得出還缺幾人。
+  const maxSeats = room.maxSeats || room.seats.length;
+  for (let i = 0; i < maxSeats; i++) {
     const seat = room.seats[i];
     const li = document.createElement('li');
 
@@ -295,193 +284,77 @@ function renderRoom() {
 
   // 只有房長能開始，而且必須滿四人。
   el.startBtn.hidden = !room.youAreHost;
-  el.startBtn.disabled = !room.full;
+  el.startBtn.disabled = !room.canStart;
   if (!room.youAreHost) {
     el.startHint.textContent = '等待房長開始遊戲…';
-  } else if (!room.full) {
-    el.startHint.textContent = `還需要 ${4 - room.seats.length} 位玩家才能開始`;
+  } else if (!room.canStart) {
+    el.startHint.textContent = `還需要 ${maxSeats - room.seats.length} 位玩家才能開始`;
   } else {
     el.startHint.textContent = '人數已滿，可以開始了';
   }
 }
 
-// ---------- 牌桌 ----------
 
-function renderTable() {
-  const m = state.match;
-  if (!m) return;
+// ---------- 遊戲模組 ----------
 
-  renderOpponents(m);
-  renderTableCards(m);
-  renderMyHand(m);
-  renderControls(m);
+// 各遊戲的畫面模組。web/games/<id>/table.js 會在載入時註冊進來。
+const games = {};
 
-  if (m.over && !state.resultShown) {
-    showResult(m);
-  }
+// registerGame 讓遊戲模組把自己掛進平台。
+//
+// mod 需要提供：
+//   screen   該遊戲的畫面元素 id
+//   mount    進入房間時呼叫一次，用來抓元素、綁事件
+//   render   每次收到新狀態時呼叫
+//   unmount  離開房間時呼叫，清掉殘留畫面
+function registerGame(id, mod) {
+  games[id] = mod;
 }
 
-function renderOpponents(m) {
-  el.opponents.replaceChildren();
-
-  // 從自己的下一家開始排，讓出牌順序看起來符合直覺。
-  const order = [];
-  for (let i = 1; i < m.seats.length; i++) {
-    order.push(m.seats[(m.yourSeat + i) % m.seats.length]);
-  }
-
-  for (const seat of order) {
-    const div = document.createElement('div');
-    div.className = 'opponent';
-    if (seat.isTurn) div.classList.add('is-turn');
-    if (seat.rank > 0) div.classList.add('is-out');
-    if (seat.offline) div.classList.add('is-offline');
-
-    const name = document.createElement('div');
-    name.className = 'opponent-name';
-    name.textContent = seat.name;
-
-    const meta = document.createElement('div');
-    meta.className = 'opponent-meta';
-    if (seat.rank > 0) {
-      meta.innerHTML = `<span class="opponent-rank">第 ${seat.rank} 名</span>`;
-    } else {
-      meta.textContent = `${seat.cardCount} 張`
-        + (seat.offline ? '．斷線中' : seat.passed ? '．已 PASS' : '');
-    }
-
-    div.append(name, meta);
-    el.opponents.append(div);
-  }
-}
-
-function renderTableCards(m) {
-  el.tableCards.replaceChildren();
-
-  if (!m.table) {
-    el.tableLabel.textContent = m.over ? '本局結束' : '自由出牌';
-    return;
-  }
-  el.tableLabel.textContent = `檯面：${m.table.type}`;
-  for (const c of m.table.cards) {
-    el.tableCards.append(cardNode(c));
-  }
-}
-
-function renderMyHand(m) {
-  el.myHand.replaceChildren();
-
-  for (const c of m.yourHand) {
-    const node = cardNode(c);
-    node.onclick = () => toggleCard(c);
-    if (isSelected(c)) node.classList.add('selected');
-    el.myHand.append(node);
-  }
-
-  // 有人斷線時牌局暫停，優先顯示在等誰。
-  if (m.waitingFor && m.waitingFor.length > 0) {
-    el.myStatus.textContent = `等待 ${m.waitingFor.join('、')} 重新連線…`;
-    el.myStatus.className = 'my-status waiting';
+// showGame 顯示某個遊戲的畫面並交給它的模組渲染。
+function showGame(kindId, view) {
+  const mod = games[kindId];
+  if (!mod) {
+    toast(`還沒有「${kindId}」的畫面`);
     return;
   }
 
-  const me = m.seats[m.yourSeat];
-  if (me && me.rank > 0) {
-    el.myStatus.textContent = `你是第 ${me.rank} 名`;
-    el.myStatus.className = 'my-status active';
-  } else if (m.canPlay) {
-    el.myStatus.textContent = m.table ? '輪到你出牌' : '輪到你，可自由出牌';
-    el.myStatus.className = 'my-status active';
-  } else {
-    el.myStatus.textContent = m.over ? '' : '等待其他玩家…';
-    el.myStatus.className = 'my-status';
+  // 換了遊戲（或第一次進來）才重新掛載，否則每次推播都會清掉選到一半的牌。
+  if (state.activeGame !== kindId) {
+    unmountGame();
+    state.activeGame = kindId;
+    mod.mount({
+      send: (move) => send({ action: 'move', move }),
+      leaveRoom: () => send({ action: 'leaveRoom' }),
+    });
+  }
+  mod.render(view);
+  showScreen(mod.screen);
+}
+
+// unmountGame 收掉目前掛載的遊戲畫面。
+function unmountGame() {
+  const mod = games[state.activeGame];
+  if (mod && mod.unmount) mod.unmount();
+  state.activeGame = '';
+}
+
+// renderGameChoices 把可以開的遊戲填進開房的選單。
+function renderGameChoices() {
+  if (!el.gameSelect) return;
+  el.gameSelect.replaceChildren();
+  for (const g of state.games) {
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = g.minSeats === g.maxSeats
+      ? `${g.name}（${g.maxSeats} 人）`
+      : `${g.name}（${g.minSeats}~${g.maxSeats} 人）`;
+    el.gameSelect.append(opt);
   }
 }
 
-function renderControls(m) {
-  el.playBtn.disabled = !m.canPlay || state.selected.length === 0;
-  el.passBtn.disabled = !m.canPass;
-  el.clearBtn.disabled = state.selected.length === 0;
-}
-
-// ---------- 選牌 ----------
-
-const sameCard = (a, b) => a.rank === b.rank && a.suit === b.suit;
-const isSelected = (c) => state.selected.some((s) => sameCard(s, c));
-
-function toggleCard(c) {
-  if (!state.match || !state.match.canPlay) return;
-
-  if (isSelected(c)) {
-    state.selected = state.selected.filter((s) => !sameCard(s, c));
-  } else {
-    state.selected.push({ rank: c.rank, suit: c.suit });
-  }
-  renderMyHand(state.match);
-  renderControls(state.match);
-}
-
-function clearSelection() {
-  state.selected = [];
-  if (state.match) {
-    renderMyHand(state.match);
-    renderControls(state.match);
-  }
-}
-
-// ---------- 牌面 ----------
-
-// cardNode 畫出一張牌。左上與右下各印一組點數花色，右下那組轉 180 度，
-// 和真實撲克牌一樣。
-function cardNode(c) {
-  const div = document.createElement('div');
-  div.className = 'card';
-  if (RED_SUITS.has(c.suit)) div.classList.add('red');
-
-  div.append(corner(c));
-  const br = corner(c);
-  br.className = 'corner-br';
-  div.append(br);
-
-  div.setAttribute('aria-label', `${RANK_TEXT[c.rank]} ${SUIT_TEXT[c.suit]}`);
-  return div;
-}
-
-function corner(c) {
-  const wrap = document.createElement('div');
-  const rank = document.createElement('div');
-  rank.className = 'rank';
-  rank.textContent = RANK_TEXT[c.rank];
-  const suit = document.createElement('div');
-  suit.className = 'suit';
-  suit.textContent = SUIT_TEXT[c.suit];
-  wrap.append(rank, suit);
-  return wrap;
-}
-
-// ---------- 結算 ----------
-
-function showResult(m) {
-  state.resultShown = true;
-  el.resultList.replaceChildren();
-
-  for (const r of m.rankings) {
-    const li = document.createElement('li');
-    li.textContent = `${r.name}`;
-    if (r.seat === m.yourSeat) li.className = 'me';
-    el.resultList.append(li);
-  }
-  // 沒排進名次的那位就是第四名。
-  const last = m.seats.find((s) => s.rank === 0);
-  if (last) {
-    const li = document.createElement('li');
-    li.textContent = `${last.name}（第 4 名）`;
-    if (last.seat === m.yourSeat) li.className = 'me';
-    el.resultList.append(li);
-  }
-
-  el.result.hidden = false;
-}
+// 對外只露出註冊用的介面，其餘都是平台內部的事。
+window.Playground = { registerGame };
 
 // ---------- 提示訊息 ----------
 
@@ -506,30 +379,17 @@ el.nameForm.onsubmit = (e) => {
 
 el.createForm.onsubmit = (e) => {
   e.preventDefault();
-  send({ action: 'createRoom', name: el.roomNameInput.value.trim() });
+  send({
+    action: 'createRoom',
+    name: el.roomNameInput.value.trim(),
+    kindId: el.gameSelect.value,
+  });
   el.roomNameInput.value = '';
 };
 
 el.leaveBtn.onclick = () => send({ action: 'leaveRoom' });
 el.startBtn.onclick = () => send({ action: 'start' });
 
-el.playBtn.onclick = () => {
-  if (state.selected.length === 0) return;
-  send({ action: 'play', cards: state.selected });
-  state.selected = [];
-};
-
-el.passBtn.onclick = () => {
-  send({ action: 'pass' });
-  state.selected = [];
-};
-
-el.clearBtn.onclick = clearSelection;
-
-el.resultClose.onclick = () => {
-  el.result.hidden = true;
-  send({ action: 'leaveRoom' });
-};
 
 // ---------- 啟動 ----------
 

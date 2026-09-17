@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>大老二</title>
+<title>Playground</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,7 +15,7 @@
      才決定要顯示哪個畫面，避免重連時先閃一下首頁。 -->
 <section id="screen-name" class="screen" hidden>
   <div class="card-panel">
-    <h1 class="title">大老二</h1>
+    <h1 class="title">Playground</h1>
     <p class="subtitle">輸入你的暱稱開始遊戲</p>
     <form id="name-form" class="form-row" autocomplete="off">
       <input id="name-input" type="text" maxlength="12" placeholder="你的暱稱" required>
@@ -32,6 +32,7 @@
   </header>
 
   <form id="create-form" class="form-row" autocomplete="off">
+    <select id="game-select" aria-label="選擇遊戲"></select>
     <input id="room-name-input" type="text" maxlength="12" placeholder="房間名稱（可留空）">
     <button type="submit" class="btn btn-primary">建立房間</button>
   </form>
@@ -88,5 +89,7 @@
 <div id="toast" class="toast" hidden></div>
 
 <script src="app.js"></script>
+<!-- 各遊戲的畫面模組。載入時會自己註冊進平台。 -->
+<script src="games/bigtwo/table.js"></script>
 </body>
 </html>
