@@ -1,6 +1,7 @@
-# bigTwo 開發須知
+# playground 開發須知
 
-台灣規則四人大老二。Go 後端 + 原生 HTML/CSS/JS 前端。
+多人連線的遊戲平台，目前收錄台灣規則四人大老二。
+Go 後端 + 原生 HTML/CSS/JS 前端，module 名稱是 `playground`。
 
 ## 環境
 
@@ -16,34 +17,60 @@ Go 1.23，所以不能用 1.24 才有的 `testing.B.Loop`。
 
 ## 分層原則
 
-依賴單向往外，內層不知道外層存在：
+最重要的一條界線是**平台與遊戲**：平台負責所有遊戲都一樣的事
+（連線、登入、大廳、開房、座位、斷線重連），它**完全不知道房間裡在玩什麼**。
 
 ```
-game  ←  match  ←  lobby  ←  server  ←  cmd/server
+             internal/platform  ←  cmd/server  →  internal/games/bigtwo
+             （通用，不認識任何遊戲）  組裝      ↑  rules ← match ← bigtwo
 ```
 
-- `internal/game`：純規則，無狀態、無 I/O。牌型判斷與比大小。
-- `internal/match`：一局的流程。Round、PASS 資格、名次、順位。
-- `internal/lobby`：房間管理。**所有會改動 Match 的操作都要走這一層**，
+- `internal/platform`：大廳、房間、WebSocket、session、資料視圖。
+  唯一認識 HTTP 的一層。**所有會改動牌局的操作都要走這一層**，
   因為它持有保護共用狀態的鎖。
-- `internal/shuffle`：發牌與排座位用的洗牌器。
-- `internal/gamelog`：把一局牌寫成人看得懂的紀錄檔，實作 `match.Observer`。
-- `internal/server`：WebSocket 與資料視圖。唯一認識 HTTP 的一層。
+- `internal/platform/game.go`：平台與遊戲之間的界線，定義 `Kind` 與 `Instance`。
+  平台只透過 `Act(seat, json.RawMessage)` / `ViewFor` / `Over` 操作遊戲。
+- `internal/games/bigtwo`：把大老二接上 `platform.Instance`，
+  負責翻譯動作與整理畫面資料。底下三個子套件才是規則本身：
+  - `rules`：純規則，無狀態、無 I/O。牌型判斷與比大小。
+  - `match`：一局的流程。Round、PASS 資格、名次、順位。
+  - `gamelog`：把一局牌寫成人看得懂的紀錄檔，實作 `match.Observer`。
+- `internal/shuffle`：發牌與排座位用的洗牌器，平台與遊戲共用。
 - `web`：前端靜態檔，並用 `go:embed` 把它們編進執行檔。
+  `web/app.js` 是平台，各遊戲的畫面在 `web/games/<id>/table.js`。
   **改了 `web/` 底下的檔案要重新編譯才會生效**，開發時可用 `-web web` 繞過。
 
-改規則只會動到 `game` 與 `match`。加功能前先想清楚該放哪一層。
+`platform` **不 import 任何遊戲套件**（那會造成循環依賴），
+而是由 `cmd/server` 的 `init()` 呼叫 `platform.Register(bigtwo.Kind())` 組裝起來。
+
+改大老二的規則只會動到 `rules` 與 `match`。加功能前先想清楚：
+這件事是所有遊戲都要的（放 `platform`），還是只有大老二要的（放 `games/bigtwo`）。
+
+## 加一個新遊戲
+
+平台不必改。照這四步：
+
+1. 在 `internal/games/<id>/` 實作 `platform.Instance`：
+   `Act`（解析該遊戲自己定義的動作 JSON）、`ViewFor`（**只能回傳該座位看得到的東西**）、
+   `Over`。再提供一個回傳 `platform.Kind` 的函式，填 ID、顯示名稱與人數範圍。
+2. 在 `cmd/server/main.go` 的 `init()` 裡 `platform.Register(...)`。
+3. 寫 `web/games/<id>/table.js`，用
+   `Playground.registerGame(id, { screen, mount, render, unmount })` 掛進前端。
+   `mount` 會拿到 `{ send, leaveRoom }`，`send(move)` 送出的東西就是後端 `Act` 收到的。
+4. 在 `web/index.html` 加上該遊戲的畫面區塊與 `<script>`。
+
+前端靠 `Kind.ID` 決定載入哪個畫面，所以兩邊的 id 字串必須一致。
 
 ## 併發規則
 
-`lobby.Lobby` 的鎖保護所有房間與牌局狀態。**不要在鎖外讀取 `Room` 的欄位**
-（包含 `Seats` 與 `Match`），要用 `Read` / `ReadAll` 把讀取包進鎖裡。
-出牌一律走 `PlayInRoom`，不要自己拿 `r.Match` 出來呼叫。
+`platform.Lobby` 的鎖保護所有房間與牌局狀態。**不要在鎖外讀取 `Room` 的欄位**
+（包含 `Seats` 與 `Game`），要用 `Read` / `ReadAll` 把讀取包進鎖裡。
+玩家動作一律走 `ActInRoom`，不要自己拿 `r.Game` 出來呼叫。
 
 送訊息給連線用 `client.deliver`，它同時處理「佇列已滿」與「連線已關」。
 **不要直接對 `c.send` 做 channel 操作**。
 
-改動 `server` 或 `lobby` 之後務必跑 `-race`，一般測試抓不到這類錯誤。
+改動 `internal/platform` 之後務必跑 `-race`，一般測試抓不到這類錯誤。
 
 ## 規則細節
 
@@ -66,7 +93,7 @@ game  ←  match  ←  lobby  ←  server  ←  cmd/server
 ```bash
 GO111MODULE=on go test -short ./...        # 快，日常用
 GO111MODULE=on go test ./...               # 完整，約 2~4 分鐘
-GO111MODULE=on go test -race -short ./...  # 改 server/lobby 後必跑
+GO111MODULE=on go test -race -short ./...  # 改 platform 後必跑
 ```
 
 寫測試時請涵蓋臨界與極端情況，不要只測正常路徑 —— 這個專案的幾個真 bug
@@ -94,7 +121,7 @@ GO111MODULE=on go test -race -short ./...  # 改 server/lobby 後必跑
 
 ## 斷線重連
 
-身分靠 `internal/server/session.go` 的 token 跨連線保存，不是綁在連線上。
+身分靠 `internal/platform/session.go` 的 token 跨連線保存，不是綁在連線上。
 關鍵是分辨兩種「同一個身分出現第二條連線」的情況：`session.dropAt` 非零
 代表原本那條已經斷了（重連，接回去），零代表還活著（搶佔，必須擋下來
 保護先連上的人）。改動這一段時務必保持這個區分。
@@ -102,11 +129,16 @@ GO111MODULE=on go test -race -short ./...  # 改 server/lobby 後必跑
 斷線時 `markDisconnected` 只在**遊戲進行中**才把房間記進 session ——
 還沒開局的話斷線就直接離開房間了，記著會讓重連試圖接回不存在的座位。
 
-有人斷線時 `PlayInRoom` 會回 `ErrWaitingForPlayer` 讓牌局暫停，
-`markOffline` 則把斷線狀態合併進牌桌視圖（停用出牌、列出在等誰）。
+有人斷線時 `ActInRoom` 會回 `ErrWaitingForPlayer` 讓牌局暫停，
+`Lobby.MarkOffline` 則替他保留座位。斷線是**平台**的概念，遊戲本身不管連線，
+所以平台把 `Room.OfflineSeats()` 當參數傳進 `ViewFor`，由各遊戲自己決定
+怎麼標進畫面（停用動作按鈕、列出在等誰）。
 
 ## 牌局紀錄
 
 每局會在 `-logdir`（預設 `logs/`）底下寫一份紀錄檔，內容足以重現整局。
 `match` 層只透過 `Observer` 介面回報事件，**不碰檔案 I/O**；
-真正寫檔的是 `internal/gamelog`。要加記錄內容請擴充 `Observer`。
+真正寫檔的是 `internal/games/bigtwo/gamelog`。要加記錄內容請擴充 `Observer`。
+
+紀錄的格式是**各遊戲自己的事**：平台只認得 `platform.Recorder`（只有 `Close`），
+由 `Kind.NewRecorder` 開檔、原封不動交還給 `New`，再由遊戲轉回具體型別使用。
