@@ -92,6 +92,19 @@ GO111MODULE=on go test -race -short ./...  # 改 server/lobby 後必跑
 
 測試要重現固定牌局時用 `shuffle.Seeded(seed)`。
 
+## 斷線重連
+
+身分靠 `internal/server/session.go` 的 token 跨連線保存，不是綁在連線上。
+關鍵是分辨兩種「同一個身分出現第二條連線」的情況：`session.dropAt` 非零
+代表原本那條已經斷了（重連，接回去），零代表還活著（搶佔，必須擋下來
+保護先連上的人）。改動這一段時務必保持這個區分。
+
+斷線時 `markDisconnected` 只在**遊戲進行中**才把房間記進 session ——
+還沒開局的話斷線就直接離開房間了，記著會讓重連試圖接回不存在的座位。
+
+有人斷線時 `PlayInRoom` 會回 `ErrWaitingForPlayer` 讓牌局暫停，
+`markOffline` 則把斷線狀態合併進牌桌視圖（停用出牌、列出在等誰）。
+
 ## 牌局紀錄
 
 每局會在 `-logdir`（預設 `logs/`）底下寫一份紀錄檔，內容足以重現整局。

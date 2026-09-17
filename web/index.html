@@ -11,8 +11,9 @@
 <!-- 連線狀態：斷線時才顯示 -->
 <div id="connection" class="banner" hidden>連線中斷，正在重新連線…</div>
 
-<!-- 畫面一：輸入暱稱 -->
-<section id="screen-name" class="screen">
+<!-- 畫面一：輸入暱稱。預設隱藏，等伺服器回應（可能是接回先前的身分）
+     才決定要顯示哪個畫面，避免重連時先閃一下首頁。 -->
+<section id="screen-name" class="screen" hidden>
   <div class="card-panel">
     <h1 class="title">大老二</h1>
     <p class="subtitle">輸入你的暱稱開始遊戲</p>

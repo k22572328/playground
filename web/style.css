@@ -203,6 +203,13 @@ input[type="text"]:focus {
 
 .opponent.is-out { opacity: .5; }
 
+/* 斷線中的玩家：座位保留著，但用虛線與灰調表示他暫時不在 */
+.opponent.is-offline {
+  opacity: .6;
+  border-style: dashed;
+  border-color: var(--danger);
+}
+
 .opponent-name { font-weight: 600; margin-bottom: 4px; }
 .opponent-meta { font-size: .85rem; color: var(--muted); }
 .opponent-rank { color: var(--gold); font-weight: 600; }
@@ -226,6 +233,9 @@ input[type="text"]:focus {
 .my-area { display: flex; flex-direction: column; gap: 12px; }
 .my-status { text-align: center; min-height: 1.4em; font-weight: 600; }
 .my-status.active { color: var(--gold); }
+
+/* 牌局因為有人斷線而暫停 */
+.my-status.waiting { color: var(--danger); }
 
 .hand {
   display: flex;

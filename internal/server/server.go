@@ -33,7 +33,12 @@ const (
 	pingPeriod = pongWait * 9 / 10
 )
 
-var errEmptyName = errors.New("請先輸入暱稱")
+var (
+	errEmptyName      = errors.New("請先輸入暱稱")
+	errNoSession      = errors.New("沒有可接回的身分")
+	errSessionExpired = errors.New("先前的連線已經失效，請重新輸入暱稱")
+	errSessionInUse   = errors.New("這個身分已經在別的視窗使用中")
+)
 
 // Server 提供遊戲的 HTTP 與 WebSocket 服務。
 type Server struct {
@@ -41,8 +46,14 @@ type Server struct {
 	upgrader websocket.Upgrader
 	webFS    fs.FS
 
+	// sessions 讓玩家重新整理或短暫斷線後還能接回原本的身分。
+	sessions *sessions
+
 	// nextPlayer 產生玩家識別碼。
 	nextPlayer atomic.Int64
+
+	// stop 用來關掉背景的過期清理。
+	stop chan struct{}
 }
 
 // Options 調整伺服器的行為。零值即為合理的預設：內嵌前端、不寫牌局紀錄。
@@ -76,15 +87,45 @@ func NewWithOptions(opts Options) *Server {
 		l = lobby.NewWithRecorder(shuffler, recorderFactory(opts.LogDir))
 	}
 
-	return &Server{
-		hub:   newHub(l),
-		webFS: webFS,
+	s := &Server{
+		hub:      newHub(l),
+		webFS:    webFS,
+		sessions: newSessions(),
+		stop:     make(chan struct{}),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			// 這是區網內自架的遊戲，不做跨站來源限制。
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
+	}
+	go s.reapLoop()
+	return s
+}
+
+// Close 停掉背景工作。
+func (s *Server) Close() { close(s.stop) }
+
+// reapLoop 定期把寬限期已過、確定不會回來的玩家移出房間。
+func (s *Server) reapLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stop:
+			return
+		case now := <-ticker.C:
+			for _, sess := range s.sessions.expiredDrops(now) {
+				if sess.roomID == "" {
+					continue
+				}
+				log.Printf("玩家 %s 超過寬限期未重連，移出房間 %s", sess.name, sess.roomID)
+				_ = s.hub.lobby.Leave(sess.roomID, sess.playerID)
+				s.hub.broadcastRoom(sess.roomID)
+				s.hub.broadcastLobby()
+			}
+		}
 	}
 }
 
@@ -123,13 +164,99 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		playerID: s.newPlayerID(),
 		send:     make(chan outbound, sendQueueSize),
 	}
+	// 發一組 token 給瀏覽器存起來，之後重新整理或斷線就靠它接回身分。
+	sess := s.sessions.create(c.playerID)
+	c.token = sess.token
+
 	// welcome 必須是這條連線收到的第一則訊息，所以搶在 hub.add 之前放進佇列：
 	// 一旦登記進 hub，其他 goroutine 的廣播就可能先擠進來。
-	c.deliver(outbound{Type: msgWelcome, PlayerID: c.playerID})
+	c.deliver(outbound{Type: msgWelcome, PlayerID: c.playerID, Token: sess.token})
 	s.hub.add(c)
 
 	go s.writeLoop(conn, c)
 	s.readLoop(conn, c)
+}
+
+// markDisconnected 記下這條連線斷了，並開始計算重連的寬限期。
+//
+// 只有當這個 token 目前仍對應到這條連線時才動作 —— 否則會把
+// 剛接手的新連線誤標成斷線（重連時舊連線也會走到這裡）。
+func (s *Server) markDisconnected(c *client) {
+	if c.token == "" {
+		return
+	}
+	// 只有在遊戲進行中，座位才會替他保留下來；還沒開局的話斷線就直接
+	// 離開房間了，所以不能把那個房間記進 session，否則重連會試著接回
+	// 一個早就不存在的座位。
+	roomID := s.hub.roomOf(c.playerID)
+	holdsSeat := false
+	if roomID != "" {
+		_ = s.hub.lobby.Read(roomID, func(r *lobby.Room) { holdsSeat = r.Started })
+	}
+
+	s.sessions.update(c.token, func(sess *session) {
+		if sess.playerID != c.playerID {
+			return // 身分已經被新的連線接手，這是舊連線的收尾
+		}
+		sess.live = false
+		if holdsSeat {
+			sess.roomID = roomID
+			sess.dropAt = time.Now().Add(reconnectGrace)
+		} else {
+			// 名字仍然保留，重連時不必重新輸入，只是不回房間。
+			sess.roomID = ""
+		}
+	})
+}
+
+// resume 讓帶著 token 的連線接回先前的身分。
+//
+// 這裡要分辨兩種「同一個身分出現第二條連線」的情況：原本那條已經斷了
+// 就是重連，該接回去；原本那條還活著就是搶佔，必須擋下來保護先連上的人。
+func (s *Server) resume(c *client, token string) error {
+	if token == "" {
+		return errNoSession
+	}
+	sess := s.sessions.get(token)
+	if sess == nil {
+		return errSessionExpired
+	}
+	if sess.online() {
+		// 先連上的人還在線上，不讓後來的搶走他的身分。
+		return errSessionInUse
+	}
+
+	oldID, roomID, name := sess.playerID, sess.roomID, sess.name
+	if name == "" {
+		return errSessionExpired // 連名字都還沒取，沒什麼好接回的
+	}
+
+	// 把身分轉移到這條新連線上。
+	s.sessions.update(token, func(sess *session) {
+		sess.playerID = c.playerID
+		sess.live = true
+		sess.dropAt = time.Time{} // 取消寬限期倒數
+	})
+	c.token = token
+	s.hub.setName(c.playerID, name)
+
+	// 沒有房間就只是回到大廳，名字保留著。
+	if roomID == "" {
+		s.hub.broadcastLobby()
+		return nil
+	}
+
+	// 接回房間裡原本的座位。
+	if _, err := s.hub.lobby.Reconnect(roomID, oldID, c.playerID); err != nil {
+		// 房間已經沒了（例如其他人都離開了），退回大廳。
+		s.sessions.update(token, func(sess *session) { sess.roomID = "" })
+		s.hub.broadcastLobby()
+		return nil
+	}
+	s.hub.setRoom(c.playerID, roomID)
+	s.hub.broadcastRoom(roomID)
+	s.hub.broadcastLobby()
+	return nil
 }
 
 // newPlayerID 產生一組不重複的玩家識別碼。
@@ -140,6 +267,7 @@ func (s *Server) newPlayerID() string {
 // readLoop 持續讀取這條連線送來的動作，直到斷線。
 func (s *Server) readLoop(conn *websocket.Conn, c *client) {
 	defer func() {
+		s.markDisconnected(c)
 		s.hub.remove(c)
 		conn.Close()
 	}()
@@ -220,6 +348,8 @@ func (s *Server) perform(c *client, msg inbound) error {
 		return s.play(c, msg.Cards)
 	case actPass:
 		return s.play(c, nil)
+	case actResume:
+		return s.resume(c, msg.Token)
 	default:
 		return errors.New("不認得的動作: " + msg.Action)
 	}
@@ -232,8 +362,19 @@ func (s *Server) setName(c *client, name string) error {
 		return errEmptyName
 	}
 	s.hub.setName(c.playerID, name)
+	s.rememberName(c, name)
 	s.hub.broadcastLobby()
 	return nil
+}
+
+// rememberName 把暱稱記進 session，讓重連時不必重新輸入。
+func (s *Server) rememberName(c *client, name string) {
+	s.sessions.update(c.token, func(sess *session) { sess.name = name })
+}
+
+// rememberRoom 把目前所在的房間記進 session，供重連時接回座位。
+func (s *Server) rememberRoom(c *client, roomID string) {
+	s.sessions.update(c.token, func(sess *session) { sess.roomID = roomID })
 }
 
 // createRoom 建立房間並直接進去當房長。
@@ -249,6 +390,7 @@ func (s *Server) createRoom(c *client, roomName string) error {
 
 	r := s.hub.lobby.Create(roomName, lobby.Seat{PlayerID: c.playerID, Name: name})
 	s.hub.setRoom(c.playerID, r.ID)
+	s.rememberRoom(c, r.ID)
 	s.hub.broadcastRoom(r.ID)
 	s.hub.broadcastLobby()
 	return nil
@@ -266,6 +408,7 @@ func (s *Server) joinRoom(c *client, roomID string) error {
 		return err
 	}
 	s.hub.setRoom(c.playerID, r.ID)
+	s.rememberRoom(c, r.ID)
 	s.hub.broadcastRoom(r.ID)
 	s.hub.broadcastLobby()
 	return nil
@@ -281,6 +424,7 @@ func (s *Server) leaveRoom(c *client) error {
 		return err
 	}
 	s.hub.setRoom(c.playerID, "")
+	s.rememberRoom(c, "") // 自己走的就不必再接回去
 	s.hub.broadcastRoom(roomID)
 	s.hub.broadcastLobby()
 	return nil

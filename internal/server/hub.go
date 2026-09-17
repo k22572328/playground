@@ -11,6 +11,9 @@ type client struct {
 	playerID string
 	name     string
 
+	// token 是這條連線的跨連線身分識別，斷線重連時用來認回原本的位置。
+	token string
+
 	// roomID 是玩家目前所在的房間；空字串代表他還在大廳。
 	roomID string
 
@@ -62,8 +65,11 @@ func newHub(l *lobby.Lobby) *hub {
 	return &hub{clients: make(map[string]*client), lobby: l}
 }
 
-// add 登記一條新連線。同一個 playerID 重複連線時，舊的會被踢掉，
-// 避免同一人開兩個分頁造成狀態分歧。
+// add 登記一條新連線。
+//
+// playerID 每次連線都是新的，正常情況不會撞號；這裡仍處理重複的情形
+// 當作保險，萬一撞號時保留新的連線並關掉舊的，避免兩條連線共用同一個
+// 身分而狀態分歧。想接回先前的身分請用 resume，它會擋下搶佔。
 func (h *hub) add(c *client) {
 	h.mu.Lock()
 	old, exists := h.clients[c.playerID]
@@ -87,12 +93,23 @@ func (h *hub) remove(c *client) {
 	h.mu.Unlock()
 
 	c.close()
-	if roomID != "" {
+	if roomID == "" {
+		return
+	}
+
+	// 遊戲進行中就替他保留座位，等他在寬限期內回來；
+	// 還沒開局的話留著也沒意義，直接讓他離開房間。
+	inProgress := false
+	_ = h.lobby.Read(roomID, func(r *lobby.Room) { inProgress = r.Started })
+
+	if inProgress {
+		h.lobby.MarkOffline(roomID, c.playerID)
+	} else {
 		// 離開房間失敗多半是房間已被刪除，對斷線流程來說不算錯誤。
 		_ = h.lobby.Leave(roomID, c.playerID)
-		h.broadcastRoom(roomID)
-		h.broadcastLobby()
 	}
+	h.broadcastRoom(roomID)
+	h.broadcastLobby()
 }
 
 // setRoom 記錄某條連線目前所在的房間。
@@ -211,7 +228,11 @@ func (h *hub) broadcastRoom(roomID string) {
 		for i, c := range members {
 			msgs[i] = outbound{Type: msgRoom, Room: ptr(newRoomView(r, c.playerID))}
 			if r.Started {
-				msgs[i].Match = newMatchView(r.Match, r.SeatOf(c.playerID))
+				mv := newMatchView(r.Match, r.SeatOf(c.playerID))
+				// 斷線狀態記在房間而不是牌局裡，所以在這裡補進牌桌視圖，
+				// 前端才知道要顯示「等待某人重新連線」並停用出牌按鈕。
+				markOffline(mv, r)
+				msgs[i].Match = mv
 			}
 		}
 	})

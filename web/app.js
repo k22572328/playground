@@ -56,7 +56,42 @@ const state = {
   match: null,    // 目前牌局的 matchView
   selected: [],   // 選取的牌，元素為 {rank, suit}
   resultShown: false,
+
+  // resuming 表示這次連上之後要先試著接回先前的身分，
+  // 在拿到結果之前不要把畫面切到首頁。
+  resuming: false,
 };
+
+// ---------- 身分保存 ----------
+
+// token 存在 localStorage，讓重新整理或短暫斷線後還能接回原本的身分
+// （包含座位與手牌）。存取包在 try 裡：無痕模式或封鎖網站資料時會丟例外，
+// 那種情況就退回「每次都是新玩家」，功能照常只是少了重連。
+const TOKEN_KEY = 'bigtwo.token';
+
+function savedToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function saveToken(token) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // 存不起來就算了，只是下次無法接回身分。
+  }
+}
+
+function clearToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // 同上，忽略即可。
+  }
+}
 
 // ---------- 連線 ----------
 
@@ -71,8 +106,6 @@ function connect() {
   ws.onopen = () => {
     reconnectDelay = 500;
     el.connection.hidden = true;
-    // 重新連上時，如果先前已經取過名字就自動補送，省得再輸入一次。
-    if (state.name) send({ action: 'setName', name: state.name });
   };
 
   ws.onmessage = (ev) => {
@@ -105,11 +138,25 @@ function send(msg) {
 
 function handle(msg) {
   switch (msg.type) {
-    case 'welcome':
+    case 'welcome': {
       state.playerID = msg.playerId;
+
+      // 先把舊 token 留著再存新的：伺服器每次連線都發一組新的，
+      // 但要接回身分得用舊的那組。
+      const previous = savedToken();
+      if (msg.token) saveToken(msg.token);
+
+      if (previous && previous !== msg.token) {
+        state.resuming = true;
+        send({ action: 'resume', token: previous });
+      } else {
+        showScreen('name');
+      }
       break;
+    }
 
     case 'lobby':
+      state.resuming = false;
       state.room = null;
       state.match = null;
       state.selected = [];
@@ -118,6 +165,7 @@ function handle(msg) {
       break;
 
     case 'room':
+      state.resuming = false;
       state.room = msg.room;
       state.match = msg.match || null;
       if (state.match) {
@@ -136,6 +184,15 @@ function handle(msg) {
       break;
 
     case 'error':
+      if (state.resuming) {
+        // 接不回先前的身分（過期、房間沒了、或被別的視窗佔用），
+        // 就當作全新的玩家從輸入暱稱開始。
+        state.resuming = false;
+        state.name = '';
+        showScreen('name');
+        toast(msg.message || '請重新輸入暱稱');
+        break;
+      }
       toast(msg.message || '動作失敗');
       break;
   }
@@ -213,7 +270,10 @@ function renderRoom() {
     const name = document.createElement('span');
     name.className = 'seat-name';
     if (seat) {
-      name.textContent = seat.name + (seat.isHost ? '（房長）' : '') + (seat.isYou ? '　← 你' : '');
+      name.textContent = seat.name
+        + (seat.isHost ? '（房長）' : '')
+        + (seat.isYou ? '　← 你' : '')
+        + (seat.offline ? '　（斷線中）' : '');
     } else {
       name.classList.add('empty-seat');
       name.textContent = '等待玩家加入…';
@@ -275,6 +335,7 @@ function renderOpponents(m) {
     div.className = 'opponent';
     if (seat.isTurn) div.classList.add('is-turn');
     if (seat.rank > 0) div.classList.add('is-out');
+    if (seat.offline) div.classList.add('is-offline');
 
     const name = document.createElement('div');
     name.className = 'opponent-name';
@@ -285,7 +346,8 @@ function renderOpponents(m) {
     if (seat.rank > 0) {
       meta.innerHTML = `<span class="opponent-rank">第 ${seat.rank} 名</span>`;
     } else {
-      meta.textContent = `${seat.cardCount} 張` + (seat.passed ? '．已 PASS' : '');
+      meta.textContent = `${seat.cardCount} 張`
+        + (seat.offline ? '．斷線中' : seat.passed ? '．已 PASS' : '');
     }
 
     div.append(name, meta);
@@ -314,6 +376,13 @@ function renderMyHand(m) {
     node.onclick = () => toggleCard(c);
     if (isSelected(c)) node.classList.add('selected');
     el.myHand.append(node);
+  }
+
+  // 有人斷線時牌局暫停，優先顯示在等誰。
+  if (m.waitingFor && m.waitingFor.length > 0) {
+    el.myStatus.textContent = `等待 ${m.waitingFor.join('、')} 重新連線…`;
+    el.myStatus.className = 'my-status waiting';
+    return;
   }
 
   const me = m.seats[m.yourSeat];

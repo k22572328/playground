@@ -49,7 +49,8 @@ type seatView struct {
 	Rank      int    `json:"rank"` // 0 表示還在場上
 	IsYou     bool   `json:"isYou"`
 	IsTurn    bool   `json:"isTurn"`
-	Passed    bool   `json:"passed"` // 本 Round 已 PASS，失去出牌資格
+	Passed    bool   `json:"passed"`  // 本 Round 已 PASS，失去出牌資格
+	Offline   bool   `json:"offline"` // 斷線中，座位保留等他回來
 }
 
 // matchView 一局遊戲在某位玩家眼中的完整狀態。
@@ -67,6 +68,9 @@ type matchView struct {
 
 	Over     bool       `json:"over"`
 	Rankings []rankView `json:"rankings"`
+
+	// WaitingFor 列出正在斷線的玩家名字；非空表示牌局暫停中。
+	WaitingFor []string `json:"waitingFor,omitempty"`
 }
 
 // rankView 結算時的名次。
@@ -115,6 +119,27 @@ func newMatchView(m *match.Match, viewer int) *matchView {
 	return v
 }
 
+// markOffline 把房間裡的斷線狀態補進牌桌視圖。
+//
+// 斷線是房間層的概念（座位替誰保留著），牌局本身並不知道，
+// 所以由這裡合併：標出誰斷線、列出在等誰，並在有人斷線時
+// 停掉出牌與 PASS —— 牌局在那段期間是暫停的。
+func markOffline(v *matchView, r *lobby.Room) {
+	if v == nil {
+		return
+	}
+	for i := range v.Seats {
+		seat := r.Seats[v.Seats[i].Seat]
+		v.Seats[i].Offline = seat.Offline
+	}
+
+	v.WaitingFor = r.OfflineNames()
+	if len(v.WaitingFor) > 0 {
+		v.CanPlay = false
+		v.CanPass = false
+	}
+}
+
 // roomView 大廳列表或房間內看到的一個房間。
 type roomView struct {
 	ID      string     `json:"id"`
@@ -134,6 +159,7 @@ type slotView struct {
 	Name     string `json:"name"`
 	IsHost   bool   `json:"isHost"`
 	IsYou    bool   `json:"isYou"`
+	Offline  bool   `json:"offline"`
 }
 
 func newRoomView(r *lobby.Room, viewerID string) roomView {
@@ -151,6 +177,7 @@ func newRoomView(r *lobby.Room, viewerID string) roomView {
 			Name:     s.Name,
 			IsHost:   r.IsHost(s.PlayerID),
 			IsYou:    s.PlayerID == viewerID,
+			Offline:  s.Offline,
 		})
 	}
 	return v

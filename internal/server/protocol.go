@@ -12,6 +12,7 @@ const (
 	actStart      = "start"      // 房長開始遊戲
 	actPlay       = "play"       // 出牌
 	actPass       = "pass"       // PASS
+	actResume     = "resume"     // 帶著 token 接回先前的身分
 )
 
 // 伺服器推播的訊息類型。
@@ -31,6 +32,10 @@ type inbound struct {
 	RoomID   string `json:"roomId"`   // joinRoom 用
 	TargetID string `json:"targetId"` // kick 用
 
+	// Token 是上次連線拿到的身分識別，重新整理或斷線重連時帶回來，
+	// 讓伺服器認出這是同一個人。
+	Token string `json:"token"`
+
 	// Cards 是出牌時選的牌，用 rank/suit 的數值表示。
 	Cards []cardRef `json:"cards"`
 }
@@ -47,6 +52,7 @@ type outbound struct {
 	Type string `json:"type"`
 
 	PlayerID string     `json:"playerId,omitempty"` // welcome 用
+	Token    string     `json:"token,omitempty"`    // welcome 用：存起來供重連
 	Rooms    []roomView `json:"rooms,omitempty"`    // lobby 用
 	Room     *roomView  `json:"room,omitempty"`     // room 用
 	Match    *matchView `json:"match,omitempty"`    // room 用，遊戲開始後才有

@@ -12,21 +12,26 @@ import (
 )
 
 var (
-	ErrRoomNotFound   = errors.New("房間不存在")
-	ErrRoomFull       = errors.New("房間已滿")
-	ErrRoomStarted    = errors.New("遊戲已經開始")
-	ErrNotHost        = errors.New("只有房長能做這件事")
-	ErrNotEnough      = errors.New("人數不足，無法開始")
-	ErrAlreadyJoined  = errors.New("你已經在這個房間了")
-	ErrNotInRoom      = errors.New("你不在這個房間")
-	ErrCannotKickSelf = errors.New("房長不能踢自己")
-	ErrNotStarted     = errors.New("遊戲還沒開始")
+	ErrRoomNotFound     = errors.New("房間不存在")
+	ErrRoomFull         = errors.New("房間已滿")
+	ErrRoomStarted      = errors.New("遊戲已經開始")
+	ErrNotHost          = errors.New("只有房長能做這件事")
+	ErrNotEnough        = errors.New("人數不足，無法開始")
+	ErrAlreadyJoined    = errors.New("你已經在這個房間了")
+	ErrNotInRoom        = errors.New("你不在這個房間")
+	ErrCannotKickSelf   = errors.New("房長不能踢自己")
+	ErrNotStarted       = errors.New("遊戲還沒開始")
+	ErrWaitingForPlayer = errors.New("有玩家斷線中，牌局暫停")
 )
 
 // Seat 房間裡的一個位子。
 type Seat struct {
 	PlayerID string `json:"playerId"`
 	Name     string `json:"name"`
+
+	// Offline 表示這位玩家目前斷線中，座位替他保留著等他回來。
+	// 只有在遊戲進行中才會發生：還沒開局的話斷線就直接離開房間。
+	Offline bool `json:"offline"`
 }
 
 // Room 一個房間。房長由 hostID 指定，離開時交給剩下的第一位；
@@ -204,6 +209,73 @@ func (l *Lobby) Join(roomID string, p Seat) (*Room, error) {
 	return r, nil
 }
 
+// MarkOffline 把玩家標記為斷線中，替他保留座位。
+// 只在遊戲進行中有意義；還沒開局時應該直接 Leave。
+// 回傳這個標記是否真的造成改變，讓呼叫端決定要不要廣播。
+func (l *Lobby) MarkOffline(roomID, playerID string) (changed bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	r, ok := l.rooms[roomID]
+	if !ok {
+		return false
+	}
+	i := r.indexOf(playerID)
+	if i < 0 || r.Seats[i].Offline {
+		return false
+	}
+	r.Seats[i].Offline = true
+	return true
+}
+
+// Reconnect 讓斷線的玩家接回原本的座位，並換上新的連線識別。
+//
+// oldID 是他斷線前的身分，newID 是這條新連線的身分。成功回傳房間，
+// 呼叫端接著要把完整的牌局狀態推回去給他。
+func (l *Lobby) Reconnect(roomID, oldID, newID string) (*Room, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	r, ok := l.rooms[roomID]
+	if !ok {
+		return nil, ErrRoomNotFound
+	}
+	i := r.indexOf(oldID)
+	if i < 0 {
+		return nil, ErrNotInRoom
+	}
+
+	r.Seats[i].PlayerID = newID
+	r.Seats[i].Offline = false
+	// 房長斷線又回來的話，房長身分也要跟著換到新的識別。
+	if r.hostID == oldID {
+		r.hostID = newID
+	}
+	return r, nil
+}
+
+// AnyoneOffline 回報房裡是否有人正在斷線中。
+// 牌局在這種時候要暫停，免得輪到斷線者卻沒人能出牌。
+func (r *Room) AnyoneOffline() bool {
+	for _, s := range r.Seats {
+		if s.Offline {
+			return true
+		}
+	}
+	return false
+}
+
+// OfflineNames 列出目前斷線中的玩家名字，用來告訴其他人在等誰。
+func (r *Room) OfflineNames() []string {
+	var names []string
+	for _, s := range r.Seats {
+		if s.Offline {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
 // Leave 讓玩家離開房間。房長離開時由下一位遞補；房間空了就刪除。
 func (l *Lobby) Leave(roomID, playerID string) error {
 	l.mu.Lock()
@@ -319,6 +391,11 @@ func (l *Lobby) PlayInRoom(roomID, playerID string, cards []game.Card) error {
 	}
 	if !r.Started || r.Match == nil {
 		return ErrNotStarted
+	}
+	// 有人斷線時牌局暫停：否則輪到斷線者就沒人能出牌，
+	// 而其他人繼續出下去，等他回來局面早就不是他離開時的樣子了。
+	if r.AnyoneOffline() {
+		return ErrWaitingForPlayer
 	}
 	seat := r.indexOf(playerID)
 	if seat < 0 {

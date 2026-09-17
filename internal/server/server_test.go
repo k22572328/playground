@@ -16,6 +16,7 @@ type testClient struct {
 	t        *testing.T
 	conn     *websocket.Conn
 	playerID string
+	token    string // 供斷線重連使用
 }
 
 // dial 連上測試伺服器，並先收下 welcome 訊息。
@@ -35,6 +36,7 @@ func dial(t *testing.T, ts *httptest.Server) *testClient {
 		t.Fatalf("第一則訊息應該是 welcome，實際 %s", welcome.Type)
 	}
 	c.playerID = welcome.PlayerID
+	c.token = welcome.Token
 	return c
 }
 
