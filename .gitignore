@@ -16,3 +16,9 @@ coverage.html
 
 # 牌局紀錄（任何目錄底下的 logs/）
 logs/
+
+# 本機的 MCP 設定（Playwright 用 headless 跑，不跳出瀏覽器視窗）
+.mcp.json
+
+# Playwright 的暫存輸出
+.playwright-mcp/
