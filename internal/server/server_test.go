@@ -1,6 +1,8 @@
 package server
 
 import (
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -97,9 +99,45 @@ func drainUntilMatch(t *testing.T, c *testClient) *matchView {
 // newTestServer 起一台測試伺服器。
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	ts := httptest.NewServer(New("../../web").Handler())
+	ts := httptest.NewServer(New().Handler())
 	t.Cleanup(ts.Close)
 	return ts
+}
+
+// TestStaticFilesServed 驗證前端頁面供應正常。前端是編進執行檔的，
+// 所以不論伺服器在哪個目錄下執行都該拿得到 —— 曾經因為用相對路徑找
+// web 目錄，導致從 cmd/server 底下執行時每頁都回 404。
+func TestStaticFilesServed(t *testing.T) {
+	ts := newTestServer(t)
+
+	for _, tc := range []struct{ path, wantType, wantBody string }{
+		{"/", "text/html", "<title>大老二</title>"},
+		{"/index.html", "text/html", "<title>大老二</title>"},
+		{"/app.js", "javascript", "WebSocket"},
+		{"/style.css", "text/css", ".card"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := http.Get(ts.URL + tc.path)
+			if err != nil {
+				t.Fatalf("取得 %s 失敗: %v", tc.path, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("%s 回應 %d，應該是 200", tc.path, resp.StatusCode)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, tc.wantType) {
+				t.Errorf("%s 的 Content-Type = %q，應含 %q", tc.path, ct, tc.wantType)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("讀取 %s 內容失敗: %v", tc.path, err)
+			}
+			if !strings.Contains(string(body), tc.wantBody) {
+				t.Errorf("%s 的內容沒有包含 %q", tc.path, tc.wantBody)
+			}
+		})
+	}
 }
 
 func TestSetNameRequired(t *testing.T) {

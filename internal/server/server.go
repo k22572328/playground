@@ -4,6 +4,7 @@ package server
 
 import (
 	"errors"
+	"io/fs"
 	"log"
 	"math/rand"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"bigTwo/internal/game"
 	"bigTwo/internal/lobby"
+	"bigTwo/web"
 )
 
 const (
@@ -35,18 +37,22 @@ var errEmptyName = errors.New("請先輸入暱稱")
 type Server struct {
 	hub      *hub
 	upgrader websocket.Upgrader
-	webRoot  string
+	webFS    fs.FS
 
 	// nextPlayer 產生玩家識別碼。
 	nextPlayer atomic.Int64
 }
 
-// New 建立一台伺服器。webRoot 是前端靜態檔的目錄。
-func New(webRoot string) *Server {
+// New 建立一台伺服器，前端頁面取自內嵌的靜態檔。
+func New() *Server { return NewWithFS(web.FS()) }
+
+// NewWithFS 建立一台伺服器，並指定前端靜態檔的來源。
+// 開發時可以傳入 os.DirFS("web")，改了前端不必重新編譯。
+func NewWithFS(webFS fs.FS) *Server {
 	l := lobby.New(rand.New(rand.NewSource(time.Now().UnixNano())))
 	return &Server{
-		hub:     newHub(l),
-		webRoot: webRoot,
+		hub:   newHub(l),
+		webFS: webFS,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -60,7 +66,7 @@ func New(webRoot string) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
-	mux.Handle("/", http.FileServer(http.Dir(s.webRoot)))
+	mux.Handle("/", http.FileServerFS(s.webFS))
 	return mux
 }
 

@@ -27,6 +27,8 @@ game  ←  match  ←  lobby  ←  server  ←  cmd/server
 - `internal/lobby`：房間管理。**所有會改動 Match 的操作都要走這一層**，
   因為它持有保護共用狀態的鎖。
 - `internal/server`：WebSocket 與資料視圖。唯一認識 HTTP 的一層。
+- `web`：前端靜態檔，並用 `go:embed` 把它們編進執行檔。
+  **改了 `web/` 底下的檔案要重新編譯才會生效**，開發時可用 `-web web` 繞過。
 
 改規則只會動到 `game` 與 `match`。加功能前先想清楚該放哪一層。
 
