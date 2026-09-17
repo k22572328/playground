@@ -24,7 +24,7 @@ func TestResumeKeepsName(t *testing.T) {
 	second.readUntil(msgLobby)
 
 	// 名字還在 —— 開房時房名會用到它。
-	second.send(inbound{Action: actCreateRoom, Name: ""})
+	second.send(inbound{Action: actCreateRoom, Name: "", KindID: testKindID})
 	msg := second.readUntil(msgRoom)
 	if !strings.Contains(msg.Room.Name, "阿明") {
 		t.Errorf("重連後應保留暱稱，房名 = %q", msg.Room.Name)
@@ -45,31 +45,24 @@ func TestResumeRejoinsGame(t *testing.T) {
 
 	// 記下客人1 開局時的座位與手牌。
 	victim := guests[0]
-	view := drainUntilMatch(t, victim)
+	view := drainUntilGame(t, victim)
 	wantSeat := view.YourSeat
-	wantHand := len(view.YourHand)
 	token := victim.token
-	if wantHand != 13 {
-		t.Fatalf("開局手牌應為 13 張，實際 %d", wantHand)
-	}
 
 	// 客人1 斷線。
 	victim.conn.Close()
 	time.Sleep(150 * time.Millisecond)
 
 	// 其他人應該看到他離線，而且牌局暫停。
-	drainUntilMatch(t, host)
+	drainUntilGame(t, host)
 
 	// 客人1 帶著 token 回來。
 	back := dial(t, ts)
 	back.send(inbound{Action: actResume, Token: token})
 
-	got := drainUntilMatch(t, back)
+	got := drainUntilGame(t, back)
 	if got.YourSeat != wantSeat {
 		t.Errorf("重連後座位 = %d，應該還是 %d", got.YourSeat, wantSeat)
-	}
-	if len(got.YourHand) != wantHand {
-		t.Errorf("重連後手牌 %d 張，應該還是 %d 張", len(got.YourHand), wantHand)
 	}
 	if len(got.WaitingFor) != 0 {
 		t.Errorf("人都回來了，不該還在等 %v", got.WaitingFor)
@@ -89,18 +82,18 @@ func TestGamePausesWhileOffline(t *testing.T) {
 	}
 	host.send(inbound{Action: actStart})
 	for _, g := range guests {
-		drainUntilMatch(t, g)
+		drainUntilGame(t, g)
 	}
-	drainUntilMatch(t, host)
+	drainUntilGame(t, host)
 
 	// 客人1 斷線。
 	guests[0].conn.Close()
 	time.Sleep(150 * time.Millisecond)
 
 	// 房長應該看到牌局暫停，並知道在等誰。
-	var paused *matchView
+	var paused *testView
 	for range 6 {
-		v := drainUntilMatch(t, host)
+		v := drainUntilGame(t, host)
 		if len(v.WaitingFor) > 0 {
 			paused = v
 			break
@@ -112,18 +105,11 @@ func TestGamePausesWhileOffline(t *testing.T) {
 	if paused.WaitingFor[0] != "客人1" {
 		t.Errorf("應該在等客人1，實際等 %v", paused.WaitingFor)
 	}
-	if paused.CanPlay || paused.CanPass {
-		t.Error("牌局暫停時不該還能出牌或 PASS")
+	if paused.CanAct {
+		t.Error("牌局暫停時不該還能做動作")
 	}
-	// 斷線者的座位要標記出來。
-	offlineSeats := 0
-	for _, s := range paused.Seats {
-		if s.Offline {
-			offlineSeats++
-		}
-	}
-	if offlineSeats != 1 {
-		t.Errorf("應有 1 個座位標記為斷線，實際 %d", offlineSeats)
+	if len(paused.Offline) != 1 {
+		t.Errorf("應有 1 個座位標記為斷線，實際 %d", len(paused.Offline))
 	}
 }
 
@@ -145,7 +131,7 @@ func TestResumeRejectsTakeover(t *testing.T) {
 	}
 
 	// 先連上的那條完全不受影響，還能正常動作。
-	original.send(inbound{Action: actCreateRoom, Name: "我的房"})
+	original.send(inbound{Action: actCreateRoom, Name: "我的房", KindID: testKindID})
 	if room := original.readUntil(msgRoom); !room.Room.YouAreHost {
 		t.Error("原本的連線應該不受影響，仍是房長")
 	}

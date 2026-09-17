@@ -3,12 +3,10 @@
 package platform
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
-
-	"playground/internal/games/bigtwo/match"
-	"playground/internal/games/bigtwo/rules"
 )
 
 var (
@@ -22,6 +20,7 @@ var (
 	ErrCannotKickSelf   = errors.New("房長不能踢自己")
 	ErrNotStarted       = errors.New("遊戲還沒開始")
 	ErrWaitingForPlayer = errors.New("有玩家斷線中，牌局暫停")
+	ErrUnknownGame      = errors.New("不認得的遊戲種類")
 )
 
 // Seat 房間裡的一個位子。
@@ -42,8 +41,11 @@ type Room struct {
 	Seats   []Seat `json:"seats"`
 	Started bool   `json:"started"`
 
-	// Match 在遊戲開始後才存在。
-	Match *match.Match `json:"-"`
+	// KindID 是這個房間要玩哪種遊戲，開房時決定。
+	KindID string `json:"kindId"`
+
+	// Game 在遊戲開始後才存在。平台只透過介面操作它。
+	Game Instance `json:"-"`
 
 	// hostID 是房長。開局會重新洗座位，所以房長不能用「座位 0」來認定。
 	hostID string
@@ -67,8 +69,20 @@ func (r *Room) IsHost(playerID string) bool {
 	return playerID != "" && playerID == r.hostID
 }
 
-// Full 回報房間是否已滿。
-func (r *Room) Full() bool { return len(r.Seats) >= match.NumPlayers }
+// Full 回報房間是否已坐滿這個遊戲的上限。
+func (r *Room) Full() bool {
+	k, ok := KindByID(r.KindID)
+	return ok && len(r.Seats) >= k.MaxSeats
+}
+
+// CanStart 回報目前人數是否足以開局。
+func (r *Room) CanStart() bool {
+	k, ok := KindByID(r.KindID)
+	return ok && k.SeatsOK(len(r.Seats))
+}
+
+// Kind 取出這個房間的遊戲種類。
+func (r *Room) Kind() (Kind, bool) { return KindByID(r.KindID) }
 
 // SeatOf 回報 playerID 在牌局中的座位；不在房裡則回傳 -1。
 // 座位在開局時洗過一次，之後整局不再變動。
@@ -84,14 +98,9 @@ func (r *Room) indexOf(playerID string) int {
 	return -1
 }
 
-// Recorder 是一局牌的紀錄檔。它同時是 match 的觀察者，並且要能被關閉。
-type Recorder interface {
-	match.Observer
-	Close() error
-}
-
-// NewRecorder 替一局牌開一份紀錄。回傳 nil 表示這局不做紀錄。
-type NewRecorder func(roomID string, names [match.NumPlayers]string) Recorder
+// NewRecorder 替一局開一份紀錄。回傳 nil 表示這局不做紀錄。
+// 紀錄的內容格式由各遊戲自己決定，平台只負責建立與關閉。
+type NewRecorder func(roomID, kindID string, names []string) Recorder
 
 // Lobby 是所有房間的集合，可安全地並行存取。
 type Lobby struct {
@@ -100,19 +109,19 @@ type Lobby struct {
 	nextID int
 
 	// shuffler 供發牌與排座位使用；抽成介面是為了讓測試注入固定序列。
-	shuffler match.Shuffler
+	shuffler Shuffler
 
 	// newRecorder 在開局時建立紀錄檔；nil 表示不記錄。
 	newRecorder NewRecorder
 }
 
 // New 建立一個空的大廳，不產生牌局紀錄。
-func newLobby(s match.Shuffler) *Lobby {
+func newLobby(s Shuffler) *Lobby {
 	return &Lobby{rooms: make(map[string]*Room), shuffler: s}
 }
 
 // NewWithRecorder 建立一個會把每局牌寫成紀錄檔的大廳。
-func newLobbyWithRecorder(s match.Shuffler, nr NewRecorder) *Lobby {
+func newLobbyWithRecorder(s Shuffler, nr NewRecorder) *Lobby {
 	l := newLobby(s)
 	l.newRecorder = nr
 	return l
@@ -170,21 +179,26 @@ func (l *Lobby) ReadAll(fn func(r *Room)) {
 	}
 }
 
-// Create 建立房間，建立者自動成為房長。
-func (l *Lobby) Create(name string, host Seat) *Room {
+// Create 建立一個指定遊戲種類的房間，建立者自動成為房長。
+func (l *Lobby) Create(name, kindID string, host Seat) (*Room, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	if _, ok := KindByID(kindID); !ok {
+		return nil, ErrUnknownGame
+	}
 
 	l.nextID++
 	r := &Room{
 		ID:        roomID(l.nextID),
 		Name:      name,
+		KindID:    kindID,
 		Seats:     []Seat{host},
 		hostID:    host.PlayerID,
 		CreatedAt: time.Now(),
 	}
 	l.rooms[r.ID] = r
-	return r
+	return r, nil
 }
 
 // Join 讓玩家加入房間。
@@ -265,15 +279,15 @@ func (r *Room) AnyoneOffline() bool {
 	return false
 }
 
-// OfflineNames 列出目前斷線中的玩家名字，用來告訴其他人在等誰。
-func (r *Room) OfflineNames() []string {
-	var names []string
-	for _, s := range r.Seats {
+// OfflineSeats 列出目前斷線中的座位，交給遊戲標進自己的畫面。
+func (r *Room) OfflineSeats() []Offline {
+	var out []Offline
+	for i, s := range r.Seats {
 		if s.Offline {
-			names = append(names, s.Name)
+			out = append(out, Offline{Seat: i, Name: s.Name})
 		}
 	}
-	return names
+	return out
 }
 
 // Leave 讓玩家離開房間。房長離開時由下一位遞補；房間空了就刪除。
@@ -337,8 +351,8 @@ func (l *Lobby) Kick(roomID, hostID, targetID string) error {
 	return nil
 }
 
-// Start 由房長開始遊戲，需要坐滿四人。
-func (l *Lobby) Start(roomID, hostID string) (*match.Match, error) {
+// Start 由房長開始遊戲，人數必須落在該遊戲允許的範圍內。
+func (l *Lobby) Start(roomID, hostID string) (Instance, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -352,8 +366,12 @@ func (l *Lobby) Start(roomID, hostID string) (*match.Match, error) {
 	if r.Started {
 		return nil, ErrRoomStarted
 	}
-	if !r.Full() {
+	if !r.CanStart() {
 		return nil, ErrNotEnough
+	}
+	kind, ok := KindByID(r.KindID)
+	if !ok {
+		return nil, ErrUnknownGame
 	}
 
 	// 開局時重新洗座位，這樣誰坐哪不會由進房順序決定 ——
@@ -362,26 +380,25 @@ func (l *Lobby) Start(roomID, hostID string) (*match.Match, error) {
 		r.Seats[i], r.Seats[j] = r.Seats[j], r.Seats[i]
 	})
 
-	var names [match.NumPlayers]string
+	names := make([]string, len(r.Seats))
 	for i, s := range r.Seats {
 		names[i] = s.Name
 	}
 
-	// 每開一局就開一份紀錄檔，日後追查問題用。記錄失敗不影響開局。
-	var obs match.Observer
+	// 每開一局就開一份紀錄，日後追查問題用。記錄失敗不影響開局。
 	if l.newRecorder != nil {
-		r.recorder = l.newRecorder(roomID, names)
-		obs = r.recorder
+		r.recorder = l.newRecorder(roomID, r.KindID, names)
 	}
 
-	r.Match = match.NewWithObserver(names, l.shuffler, obs)
+	r.Game = kind.New(names, l.shuffler, r.recorder)
 	r.Started = true
-	return r.Match, nil
+	return r.Game, nil
 }
 
-// PlayInRoom 在房間的牌局裡替 playerID 出牌；cards 為空代表 PASS。
-// 出牌會改動牌局狀態，所以和其他讀取一樣要在 Lobby 的鎖內進行。
-func (l *Lobby) PlayInRoom(roomID, playerID string, cards []rules.Card) error {
+// ActInRoom 讓 playerID 在房間的牌局裡做一個動作。
+// action 的內容由該遊戲自己解析；動作會改動牌局狀態，
+// 所以和其他讀取一樣要在 Lobby 的鎖內進行。
+func (l *Lobby) ActInRoom(roomID, playerID string, action json.RawMessage) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -389,7 +406,7 @@ func (l *Lobby) PlayInRoom(roomID, playerID string, cards []rules.Card) error {
 	if !ok {
 		return ErrRoomNotFound
 	}
-	if !r.Started || r.Match == nil {
+	if !r.Started || r.Game == nil {
 		return ErrNotStarted
 	}
 	// 有人斷線時牌局暫停：否則輪到斷線者就沒人能出牌，
@@ -401,11 +418,11 @@ func (l *Lobby) PlayInRoom(roomID, playerID string, cards []rules.Card) error {
 	if seat < 0 {
 		return ErrNotInRoom
 	}
-	err := r.Match.Play(seat, cards)
+	err := r.Game.Act(seat, action)
 
 	// 一局打完就把紀錄收起來，確保內容落到磁碟上，
-	// 不必等房間解散。Finished 已經在 Play 裡寫進去了。
-	if r.Match.Over() {
+	// 不必等房間解散。結束的事件已經在 Act 裡寫進去了。
+	if r.Game.Over() {
 		r.closeRecorder()
 	}
 	return err

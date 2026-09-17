@@ -7,7 +7,20 @@ import (
 	"playground/internal/games/bigtwo/match"
 )
 
-func newTestLobby() *Lobby { return newLobby(rand.New(rand.NewSource(1))) }
+// mustCreate 開一間測試用的房間，失敗即中止。
+func mustCreate(t *testing.T, l *Lobby, name string, host Seat) *Room {
+	t.Helper()
+	r, err := l.Create(name, testKindID, host)
+	if err != nil {
+		t.Fatalf("建立房間失敗: %v", err)
+	}
+	return r
+}
+
+func newTestLobby() *Lobby {
+	registerTestGame()
+	return newLobby(rand.New(rand.NewSource(1)))
+}
 
 func seat(id, name string) Seat { return Seat{PlayerID: id, Name: name} }
 
@@ -24,7 +37,7 @@ func fill(t *testing.T, l *Lobby, r *Room) *Room {
 
 func TestCreateMakesCreatorHost(t *testing.T) {
 	l := newTestLobby()
-	r := l.Create("測試房", seat("p1", "A"))
+	r := mustCreate(t, l, "測試房", seat("p1", "A"))
 
 	if !r.IsHost("p1") {
 		t.Error("建立者應該是房長")
@@ -39,8 +52,8 @@ func TestCreateMakesCreatorHost(t *testing.T) {
 
 func TestListShowsCreatedRooms(t *testing.T) {
 	l := newTestLobby()
-	l.Create("房一", seat("p1", "A"))
-	l.Create("房二", seat("p2", "B"))
+	mustCreate(t, l, "房一", seat("p1", "A"))
+	mustCreate(t, l, "房二", seat("p2", "B"))
 
 	if got := len(l.List()); got != 2 {
 		t.Errorf("大廳應該有 2 個房間，實際 %d", got)
@@ -49,7 +62,7 @@ func TestListShowsCreatedRooms(t *testing.T) {
 
 func TestJoinUntilFull(t *testing.T) {
 	l := newTestLobby()
-	r := fill(t, l, l.Create("測試房", seat("p1", "A")))
+	r := fill(t, l, mustCreate(t, l, "測試房", seat("p1", "A")))
 
 	if !r.Full() {
 		t.Fatal("四人應該算滿房")
@@ -62,7 +75,7 @@ func TestJoinUntilFull(t *testing.T) {
 
 func TestCannotJoinTwice(t *testing.T) {
 	l := newTestLobby()
-	r := l.Create("測試房", seat("p1", "A"))
+	r := mustCreate(t, l, "測試房", seat("p1", "A"))
 
 	if _, err := l.Join(r.ID, seat("p1", "A")); err != ErrAlreadyJoined {
 		t.Errorf("err = %v, 想要 %v", err, ErrAlreadyJoined)
@@ -78,7 +91,7 @@ func TestJoinUnknownRoom(t *testing.T) {
 
 func TestHostSuccession(t *testing.T) {
 	l := newTestLobby()
-	r := l.Create("測試房", seat("p1", "A"))
+	r := mustCreate(t, l, "測試房", seat("p1", "A"))
 	if _, err := l.Join(r.ID, seat("p2", "B")); err != nil {
 		t.Fatalf("Join 失敗: %v", err)
 	}
@@ -93,7 +106,7 @@ func TestHostSuccession(t *testing.T) {
 
 func TestEmptyRoomIsDeleted(t *testing.T) {
 	l := newTestLobby()
-	r := l.Create("測試房", seat("p1", "A"))
+	r := mustCreate(t, l, "測試房", seat("p1", "A"))
 
 	if err := l.Leave(r.ID, "p1"); err != nil {
 		t.Fatalf("Leave 失敗: %v", err)
@@ -105,7 +118,7 @@ func TestEmptyRoomIsDeleted(t *testing.T) {
 
 func TestKick(t *testing.T) {
 	l := newTestLobby()
-	r := l.Create("測試房", seat("p1", "A"))
+	r := mustCreate(t, l, "測試房", seat("p1", "A"))
 	if _, err := l.Join(r.ID, seat("p2", "B")); err != nil {
 		t.Fatalf("Join 失敗: %v", err)
 	}
@@ -129,7 +142,7 @@ func TestKick(t *testing.T) {
 
 func TestStartRequiresFullRoom(t *testing.T) {
 	l := newTestLobby()
-	r := l.Create("測試房", seat("p1", "A"))
+	r := mustCreate(t, l, "測試房", seat("p1", "A"))
 
 	if _, err := l.Start(r.ID, "p1"); err != ErrNotEnough {
 		t.Errorf("人數不足時 err = %v, 想要 %v", err, ErrNotEnough)
@@ -138,7 +151,7 @@ func TestStartRequiresFullRoom(t *testing.T) {
 
 func TestStartRequiresHost(t *testing.T) {
 	l := newTestLobby()
-	r := fill(t, l, l.Create("測試房", seat("p1", "A")))
+	r := fill(t, l, mustCreate(t, l, "測試房", seat("p1", "A")))
 
 	if _, err := l.Start(r.ID, "p2"); err != ErrNotHost {
 		t.Errorf("非房長開始遊戲 err = %v, 想要 %v", err, ErrNotHost)
@@ -154,7 +167,7 @@ func TestStartShufflesSeats(t *testing.T) {
 	shuffled := false
 	for seed := range 50 {
 		l := newLobby(rand.New(rand.NewSource(int64(seed))))
-		r := fill(t, l, l.Create("洗座位", seat("host", "房長")))
+		r := fill(t, l, mustCreate(t, l, "洗座位", seat("host", "房長")))
 		if _, err := l.Start(r.ID, "host"); err != nil {
 			t.Fatalf("Start 失敗: %v", err)
 		}
@@ -190,7 +203,7 @@ func TestStartShufflesSeats(t *testing.T) {
 func TestHostSurvivesSeatShuffle(t *testing.T) {
 	for seed := range 50 {
 		l := newLobby(rand.New(rand.NewSource(int64(seed))))
-		r := fill(t, l, l.Create("洗座位", seat("host", "房長")))
+		r := fill(t, l, mustCreate(t, l, "洗座位", seat("host", "房長")))
 		if _, err := l.Start(r.ID, "host"); err != nil {
 			t.Fatalf("Start 失敗: %v", err)
 		}
@@ -206,9 +219,9 @@ func TestHostSurvivesSeatShuffle(t *testing.T) {
 	}
 }
 
-func TestStartDealsMatch(t *testing.T) {
+func TestStartCreatesGame(t *testing.T) {
 	l := newTestLobby()
-	r := fill(t, l, l.Create("測試房", seat("p1", "A")))
+	r := fill(t, l, mustCreate(t, l, "測試房", seat("p1", "A")))
 
 	m, err := l.Start(r.ID, "p1")
 	if err != nil {
@@ -217,10 +230,14 @@ func TestStartDealsMatch(t *testing.T) {
 	if !r.Started {
 		t.Error("開始後房間應標記為已開始")
 	}
-	for _, p := range m.Players {
-		if len(p.Hand) != 13 {
-			t.Errorf("每人應發 13 張，座位 %d 實際 %d", p.Seat, len(p.Hand))
-		}
+	if m == nil {
+		t.Fatal("開始後應該產生一局遊戲")
+	}
+	if m.Over() {
+		t.Error("剛開始的一局不該已經結束")
+	}
+	if r.Game == nil {
+		t.Error("房間應該記著這局遊戲")
 	}
 	// 開始後不能再加入或踢人。
 	if _, err := l.Join(r.ID, seat("p5", "E")); err != ErrRoomStarted {
@@ -239,7 +256,7 @@ func TestRoomIDsAreUnique(t *testing.T) {
 	l := newTestLobby()
 	seen := make(map[string]bool)
 	for i := range 200 {
-		r := l.Create("房", seat("p", "A"))
+		r := mustCreate(t, l, "房", seat("p", "A"))
 		if seen[r.ID] {
 			t.Fatalf("第 %d 個房間的房號 %s 重複了", i, r.ID)
 		}

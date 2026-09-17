@@ -18,7 +18,7 @@ func TestBrowserRefreshFlow(t *testing.T) {
 	tab.setName("阿明")
 
 	// 開一間房，並找個人一起待著。
-	tab.send(inbound{Action: actCreateRoom, Name: "重整測試房"})
+	tab.send(inbound{Action: actCreateRoom, Name: "重整測試房", KindID: testKindID})
 	before := tab.readUntil(msgRoom)
 	roomID := before.Room.ID
 	joinRoom(t, ts, "室友", roomID)
@@ -50,7 +50,7 @@ func TestBrowserRefreshFlow(t *testing.T) {
 	}
 
 	// 暱稱保留著：開新房時會用它當預設房名。
-	fresh.send(inbound{Action: actCreateRoom, Name: ""})
+	fresh.send(inbound{Action: actCreateRoom, Name: "", KindID: testKindID})
 	msg := fresh.readUntil(msgRoom)
 	if !strings.Contains(msg.Room.Name, "阿明") {
 		t.Errorf("重整後應保留暱稱，房名 = %q", msg.Room.Name)

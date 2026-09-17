@@ -1,5 +1,7 @@
 package platform
 
+import "encoding/json"
+
 // 前端與伺服器之間的訊息格式。前端送 inbound，伺服器回 outbound。
 
 // 前端送過來的動作。
@@ -10,8 +12,7 @@ const (
 	actLeaveRoom  = "leaveRoom"  // 離開房間
 	actKick       = "kick"       // 房長踢人
 	actStart      = "start"      // 房長開始遊戲
-	actPlay       = "play"       // 出牌
-	actPass       = "pass"       // PASS
+	actMove       = "move"       // 遊戲內的動作（出牌、擲骰…）
 	actResume     = "resume"     // 帶著 token 接回先前的身分
 )
 
@@ -36,14 +37,12 @@ type inbound struct {
 	// 讓伺服器認出這是同一個人。
 	Token string `json:"token"`
 
-	// Cards 是出牌時選的牌，用 rank/suit 的數值表示。
-	Cards []cardRef `json:"cards"`
-}
+	// KindID 是建立房間時選的遊戲種類。
+	KindID string `json:"kindId"`
 
-// cardRef 前端指定一張牌的方式。
-type cardRef struct {
-	Rank int `json:"rank"`
-	Suit int `json:"suit"`
+	// Move 是遊戲內的動作，內容由該遊戲自己解析 ——
+	// 大老二是要出的牌，別的遊戲可能是擲骰或買地。
+	Move json.RawMessage `json:"move"`
 }
 
 // outbound 伺服器送出的一則訊息。沒用到的欄位會被省略，
@@ -55,7 +54,7 @@ type outbound struct {
 	Token    string     `json:"token,omitempty"`    // welcome 用：存起來供重連
 	Rooms    []roomView `json:"rooms,omitempty"`    // lobby 用
 	Room     *roomView  `json:"room,omitempty"`     // room 用
-	Match    *matchView `json:"match,omitempty"`    // room 用，遊戲開始後才有
+	Game     any        `json:"game,omitempty"`     // room 用，遊戲開始後才有；內容由該遊戲決定
 	Message  string     `json:"message,omitempty"`  // error / kicked 用
 }
 

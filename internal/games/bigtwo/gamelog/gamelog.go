@@ -41,9 +41,10 @@ type Recorder struct {
 //
 // 即使建立失敗也會回傳一個可用的 Recorder（只是不寫東西），
 // 讓呼叫端不必為了記錄失敗而中斷遊戲；err 供呼叫端記錄用。
-func Create(dir, roomID string, names [match.NumPlayers]string) (*Recorder, error) {
+func Create(dir, roomID string, names []string) (*Recorder, error) {
 	now := time.Now()
-	r := &Recorder{names: names, started: now, round: 1}
+	r := &Recorder{started: now, round: 1}
+	copy(r.names[:], names)
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		r.broken = true

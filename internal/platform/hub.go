@@ -225,12 +225,10 @@ func (h *hub) broadcastRoom(roomID string) {
 	err := h.lobby.Read(roomID, func(r *Room) {
 		for i, c := range members {
 			msgs[i] = outbound{Type: msgRoom, Room: ptr(newRoomView(r, c.playerID))}
-			if r.Started {
-				mv := newMatchView(r.Match, r.SeatOf(c.playerID))
-				// 斷線狀態記在房間而不是牌局裡，所以在這裡補進牌桌視圖，
-				// 前端才知道要顯示「等待某人重新連線」並停用出牌按鈕。
-				markOffline(mv, r)
-				msgs[i].Match = mv
+			if r.Started && r.Game != nil {
+				// 斷線是平台的概念，牌局本身不管連線，所以把它一起交給
+				// 遊戲，讓遊戲在自己的畫面上標示並停掉動作按鈕。
+				msgs[i].Game = r.Game.ViewFor(r.SeatOf(c.playerID), r.OfflineSeats())
 			}
 		}
 	})

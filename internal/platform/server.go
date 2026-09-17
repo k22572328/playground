@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"log"
@@ -13,9 +14,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"playground/internal/games/bigtwo/gamelog"
-	"playground/internal/games/bigtwo/match"
-	"playground/internal/games/bigtwo/rules"
 	"playground/internal/shuffle"
 	"playground/web"
 )
@@ -129,15 +127,19 @@ func (s *Server) reapLoop() {
 }
 
 // recorderFactory 產生一個在 dir 底下開紀錄檔的工廠。
-// 開檔失敗只記在伺服器日誌裡，遊戲照常進行 —— 記錄不該擋住玩家。
+//
+// 紀錄的內容格式是各遊戲自己的事，平台只負責問「這個遊戲要不要記錄」
+// 並在結束時關閉。開檔失敗只記在伺服器日誌裡，遊戲照常進行。
 func recorderFactory(dir string) NewRecorder {
-	return func(roomID string, names [match.NumPlayers]string) Recorder {
-		rec, err := gamelog.Create(dir, roomID, names)
+	return func(roomID, kindID string, names []string) Recorder {
+		kind, ok := KindByID(kindID)
+		if !ok || kind.NewRecorder == nil {
+			return nil
+		}
+		rec, err := kind.NewRecorder(dir, roomID, names)
 		if err != nil {
 			log.Printf("建立牌局紀錄失敗（遊戲繼續進行）: %v", err)
-			return rec
 		}
-		log.Printf("房間 %s 開局，紀錄寫入 %s", roomID, rec.Path())
 		return rec
 	}
 }
@@ -334,7 +336,7 @@ func (s *Server) perform(c *client, msg inbound) error {
 	case actSetName:
 		return s.setName(c, msg.Name)
 	case actCreateRoom:
-		return s.createRoom(c, msg.Name)
+		return s.createRoom(c, msg.Name, msg.KindID)
 	case actJoinRoom:
 		return s.joinRoom(c, msg.RoomID)
 	case actLeaveRoom:
@@ -343,10 +345,8 @@ func (s *Server) perform(c *client, msg inbound) error {
 		return s.kick(c, msg.TargetID)
 	case actStart:
 		return s.start(c)
-	case actPlay:
-		return s.play(c, msg.Cards)
-	case actPass:
-		return s.play(c, nil)
+	case actMove:
+		return s.move(c, msg.Move)
 	case actResume:
 		return s.resume(c, msg.Token)
 	default:
@@ -377,7 +377,7 @@ func (s *Server) rememberRoom(c *client, roomID string) {
 }
 
 // createRoom 建立房間並直接進去當房長。
-func (s *Server) createRoom(c *client, roomName string) error {
+func (s *Server) createRoom(c *client, roomName, kindID string) error {
 	name := s.hub.nameOf(c.playerID)
 	if name == "" {
 		return errEmptyName
@@ -387,7 +387,10 @@ func (s *Server) createRoom(c *client, roomName string) error {
 		roomName = name + " 的房間"
 	}
 
-	r := s.hub.lobby.Create(roomName, Seat{PlayerID: c.playerID, Name: name})
+	r, err := s.hub.lobby.Create(roomName, kindID, Seat{PlayerID: c.playerID, Name: name})
+	if err != nil {
+		return err
+	}
 	s.hub.setRoom(c.playerID, r.ID)
 	s.rememberRoom(c, r.ID)
 	s.hub.broadcastRoom(r.ID)
@@ -462,39 +465,17 @@ func (s *Server) start(c *client) error {
 	return nil
 }
 
-// play 出牌；cards 為空代表 PASS。
-func (s *Server) play(c *client, refs []cardRef) error {
+// move 讓玩家在牌局裡做一個動作；內容由該遊戲自己解析。
+func (s *Server) move(c *client, action json.RawMessage) error {
 	roomID := s.hub.roomOf(c.playerID)
 	if roomID == "" {
 		return ErrNotInRoom
 	}
-	cards, err := toCards(refs)
-	if err != nil {
-		return err
-	}
-	if err := s.hub.lobby.PlayInRoom(roomID, c.playerID, cards); err != nil {
+	if err := s.hub.lobby.ActInRoom(roomID, c.playerID, action); err != nil {
 		return err
 	}
 	s.hub.broadcastRoom(roomID)
 	return nil
-}
-
-// toCards 把前端送來的牌轉成引擎用的型別，順便擋掉超出範圍的數值。
-func toCards(refs []cardRef) ([]rules.Card, error) {
-	if len(refs) == 0 {
-		return nil, nil
-	}
-	cards := make([]rules.Card, 0, len(refs))
-	for _, ref := range refs {
-		if ref.Rank < int(rules.Three) || ref.Rank > int(rules.Two) {
-			return nil, rules.ErrInvalidCombo
-		}
-		if ref.Suit < int(rules.Clubs) || ref.Suit > int(rules.Spades) {
-			return nil, rules.ErrInvalidCombo
-		}
-		cards = append(cards, rules.Card{Rank: rules.Rank(ref.Rank), Suit: rules.Suit(ref.Suit)})
-	}
-	return cards, nil
 }
 
 // cleanName 去除前後空白並限制長度，避免版面被超長暱稱撐破。

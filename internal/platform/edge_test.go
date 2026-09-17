@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -26,14 +27,10 @@ func TestMalformedInputIsRejected(t *testing.T) {
 		{"加入空房號", inbound{Action: actJoinRoom, RoomID: ""}},
 		{"不在房間時離開", inbound{Action: actLeaveRoom}},
 		{"不在房間時開始", inbound{Action: actStart}},
-		{"不在房間時出牌", inbound{Action: actPlay, Cards: []cardRef{{Rank: 0, Suit: 0}}}},
-		{"不在房間時 PASS", inbound{Action: actPass}},
+		{"不在房間時做動作", inbound{Action: actMove, Move: json.RawMessage(`{}`)}},
 		{"不在房間時踢人", inbound{Action: actKick, TargetID: "p999"}},
 		{"踢不存在的玩家", inbound{Action: actKick, TargetID: ""}},
-		{"負數點數", inbound{Action: actPlay, Cards: []cardRef{{Rank: -1, Suit: 0}}}},
-		{"超大點數", inbound{Action: actPlay, Cards: []cardRef{{Rank: 1 << 30, Suit: 0}}}},
-		{"負數花色", inbound{Action: actPlay, Cards: []cardRef{{Rank: 0, Suit: -5}}}},
-		{"超大花色", inbound{Action: actPlay, Cards: []cardRef{{Rank: 0, Suit: 999}}}},
+		{"型別不符的動作內容", inbound{Action: actMove, Move: json.RawMessage(`{"note":123}`)}},
 	}
 
 	for _, tt := range bad {
@@ -47,7 +44,7 @@ func TestMalformedInputIsRejected(t *testing.T) {
 	}
 
 	// 轟炸完之後連線仍然可用。
-	c.send(inbound{Action: actCreateRoom, Name: "還活著"})
+	c.send(inbound{Action: actCreateRoom, Name: "還活著", KindID: testKindID})
 	c.readUntil(msgRoom)
 }
 
@@ -80,7 +77,7 @@ func TestLongNameIsTruncated(t *testing.T) {
 	c.send(inbound{Action: actSetName, Name: long})
 	c.readUntil(msgLobby)
 
-	c.send(inbound{Action: actCreateRoom, Name: "房"})
+	c.send(inbound{Action: actCreateRoom, Name: "房", KindID: testKindID})
 	msg := c.readUntil(msgRoom)
 
 	got := []rune(msg.Room.Seats[0].Name)
@@ -144,7 +141,7 @@ func TestNamingBroadcastsToOtherLobbyUsers(t *testing.T) {
 	// 另一個人取名並開房，旁觀者應該看到新房間出現。
 	host := dial(t, ts)
 	host.setName("房長")
-	host.send(inbound{Action: actCreateRoom, Name: "新房間"})
+	host.send(inbound{Action: actCreateRoom, Name: "新房間", KindID: testKindID})
 
 	// 對方取名與開房各會觸發一次廣播，新房間出現在後者，
 	// 所以要一直讀到看見它為止。
@@ -206,9 +203,9 @@ func TestJoinStartedRoomRejected(t *testing.T) {
 		joinRoom(t, ts, "客人3", roomID),
 	}
 	host.send(inbound{Action: actStart})
-	drainUntilMatch(t, host)
+	drainUntilGame(t, host)
 	for _, g := range guests {
-		drainUntilMatch(t, g)
+		drainUntilGame(t, g)
 	}
 
 	// 有人離開後空出位子，但遊戲已開始，仍不能加入。
@@ -253,7 +250,7 @@ func TestConcurrentActionsFromManyClients(t *testing.T) {
 				{Action: actCreateRoom, Name: name + "的房"},
 				{Action: actJoinRoom, RoomID: "AAA"},
 				{Action: actStart},
-				{Action: actPass},
+				{Action: actMove},
 				{Action: actKick, TargetID: "p1"},
 				{Action: actLeaveRoom},
 				{Action: "亂送的動作"},
@@ -270,7 +267,7 @@ func TestConcurrentActionsFromManyClients(t *testing.T) {
 	// 亂七八糟之後，伺服器仍然能正常服務新連線。
 	c := dial(t, ts)
 	c.setName("收尾")
-	c.send(inbound{Action: actCreateRoom, Name: "最後一間"})
+	c.send(inbound{Action: actCreateRoom, Name: "最後一間", KindID: testKindID})
 	c.readUntil(msgRoom)
 }
 

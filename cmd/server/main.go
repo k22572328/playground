@@ -9,8 +9,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"playground/internal/games/bigtwo"
 	"playground/internal/platform"
 )
+
+// 把可以玩的遊戲註冊進平台。平台本身不認識任何特定遊戲，
+// 由這裡負責組裝 —— 要加新遊戲就在這裡多註冊一種。
+func init() {
+	platform.Register(bigtwo.Kind())
+}
 
 func main() {
 	addr := flag.String("addr", ":8080", "監聽位址")

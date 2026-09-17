@@ -1,15 +1,15 @@
 package platform
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
-	"slices"
 	"sync"
 	"testing"
-
-	"playground/internal/games/bigtwo/match"
-	"playground/internal/games/bigtwo/rules"
 )
+
+// testSeats 是假遊戲的人數，平台的壓力測試用它當上限。
+const testSeats = 4
 
 // TestConcurrentJoinNeverOverfills 讓大量玩家同時搶同一間房，
 // 驗證「最多四人」這個上限在並行下不會被突破。
@@ -18,7 +18,7 @@ func TestConcurrentJoinNeverOverfills(t *testing.T) {
 
 	for round := range 50 {
 		l := newTestLobby()
-		r := l.Create("搶位子", seat("host", "房長"))
+		r := mustCreate(t, l, "搶位子", seat("host", "房長"))
 
 		var wg sync.WaitGroup
 		var joined sync.Map
@@ -37,11 +37,11 @@ func TestConcurrentJoinNeverOverfills(t *testing.T) {
 		got := 0
 		joined.Range(func(any, any) bool { got++; return true })
 		// 房長已佔一位，所以最多只能再進三人。
-		if want := match.NumPlayers - 1; got != want {
+		if want := testSeats - 1; got != want {
 			t.Fatalf("第 %d 回合：成功加入 %d 人，應該剛好 %d 人", round, got, want)
 		}
-		if len(r.Seats) != match.NumPlayers {
-			t.Fatalf("第 %d 回合：房內 %d 人，應該剛好 %d 人", round, len(r.Seats), match.NumPlayers)
+		if len(r.Seats) != testSeats {
+			t.Fatalf("第 %d 回合：房內 %d 人，應該剛好 %d 人", round, len(r.Seats), testSeats)
 		}
 	}
 }
@@ -51,10 +51,10 @@ func TestConcurrentJoinNeverOverfills(t *testing.T) {
 func TestConcurrentStartOnlyOnce(t *testing.T) {
 	for round := range 50 {
 		l := newTestLobby()
-		r := fill(t, l, l.Create("搶開始", seat("host", "房長")))
+		r := fill(t, l, mustCreate(t, l, "搶開始", seat("host", "房長")))
 
 		var mu sync.Mutex
-		var started []*match.Match
+		var started []Instance
 
 		var wg sync.WaitGroup
 		for range 50 {
@@ -80,7 +80,7 @@ func TestConcurrentStartOnlyOnce(t *testing.T) {
 // 座位數永遠在合法範圍內，且不會出現重複的玩家。
 func TestConcurrentLeaveAndJoin(t *testing.T) {
 	l := newTestLobby()
-	r := l.Create("進進出出", seat("host", "房長"))
+	r := mustCreate(t, l, "進進出出", seat("host", "房長"))
 	roomID := r.ID
 
 	var wg sync.WaitGroup
@@ -101,7 +101,7 @@ func TestConcurrentLeaveAndJoin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("房間不該消失: %v", err)
 	}
-	if len(room.Seats) > match.NumPlayers {
+	if len(room.Seats) > testSeats {
 		t.Errorf("座位數 %d 超過上限", len(room.Seats))
 	}
 	seen := make(map[string]bool)
@@ -113,55 +113,35 @@ func TestConcurrentLeaveAndJoin(t *testing.T) {
 	}
 }
 
-// TestConcurrentPlayKeepsMatchConsistent 讓四位玩家同時搶著出牌，
-// 驗證牌局狀態不會被並行寫壞：手牌總數必須始終守恆。
-func TestConcurrentPlayKeepsMatchConsistent(t *testing.T) {
+// TestConcurrentActsStayConsistent 讓四位玩家同時搶著做動作，
+// 驗證平台不會把牌局狀態寫壞：不論誰搶到，動作總數不會超過遊戲允許的量，
+// 而且過程中不會 panic 或死鎖。
+func TestConcurrentActsStayConsistent(t *testing.T) {
+	registerTestGame()
 	l := newLobby(rand.New(rand.NewSource(7)))
-	r := fill(t, l, l.Create("搶出牌", seat("host", "房長")))
+	r := fill(t, l, mustCreate(t, l, "搶動作", seat("host", "房長")))
 	if _, err := l.Start(r.ID, "host"); err != nil {
 		t.Fatalf("Start 失敗: %v", err)
 	}
 
-	// 先記下每個人的手牌，讓各 goroutine 拿真牌去搶出。
-	hands := make(map[string][]rules.Card)
 	ids := []string{"host", "p2", "p3", "p4"}
-	for i, id := range ids {
-		hands[id] = append([]rules.Card(nil), r.Match.Players[i].Hand...)
-	}
-
 	var wg sync.WaitGroup
 	for range 100 {
 		for _, id := range ids {
 			wg.Add(1)
 			go func(id string) {
 				defer wg.Done()
-				// 四家同時搶著出自己手上的第一張牌，外加 PASS。
-				// 絕大多數會被規則擋下，重點是並行不會讓狀態錯亂或 panic。
-				if h := hands[id]; len(h) > 0 {
-					_ = l.PlayInRoom(r.ID, id, h[:1])
-				}
-				_ = l.PlayInRoom(r.ID, id, nil)
+				// 大多數會因為「還沒輪到你」被擋下，
+				// 重點是同時呼叫不會讓狀態錯亂。
+				_ = l.ActInRoom(r.ID, id, json.RawMessage(`{"note":"x"}`))
 			}(id)
 		}
 	}
 	wg.Wait()
 
-	// 不論誰成功出了什麼，沒有人的手牌會超過原本的張數，
-	// 也不會有牌憑空出現。所有 goroutine 都結束了，這裡可以直接讀。
-	total := 0
-	for i, p := range r.Match.Players {
-		if len(p.Hand) > match.CardsPerHand {
-			t.Errorf("座位 %d 手牌 %d 張，超過發牌數", i, len(p.Hand))
-		}
-		// 每個人手上的牌必須都還是原本發到的那些，不能冒出別人的牌。
-		for _, c := range p.Hand {
-			if !slices.Contains(hands[ids[i]], c) {
-				t.Errorf("座位 %d 手上出現不屬於他的牌 %v", i, c)
-			}
-		}
-		total += len(p.Hand)
-	}
-	if total > match.NumPlayers*match.CardsPerHand {
-		t.Errorf("手牌總數 %d 超過 52 張", total)
+	// 所有 goroutine 都結束了，這裡可以直接讀。
+	// 假遊戲規定每人各做一次就結束，所以最後必定是結束狀態。
+	if !r.Game.Over() {
+		t.Error("四個人各搶了上百次，這局早該結束了")
 	}
 }

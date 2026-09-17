@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -102,12 +103,30 @@ func (c *testClient) setName(name string) {
 	c.readUntil(msgLobby)
 }
 
-// drainUntilMatch 一直讀到收進牌局狀態為止，回傳那份牌局視角。
-func drainUntilMatch(t *testing.T, c *testClient) *matchView {
+// gameView 把伺服器送來的遊戲狀態解成測試用的形狀。
+// 它在連線上是一團 JSON（平台不認識內容），所以要自己轉一次。
+func gameView(t *testing.T, raw any) *testView {
+	t.Helper()
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("重新編碼遊戲狀態失敗: %v", err)
+	}
+	var v testView
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatalf("解析遊戲狀態失敗: %v", err)
+	}
+	return &v
+}
+
+// drainUntilGame 一直讀到收進牌局狀態為止，回傳那份牌局視角。
+func drainUntilGame(t *testing.T, c *testClient) *testView {
 	t.Helper()
 	for range 12 {
-		if msg := c.readUntil(msgRoom); msg.Match != nil {
-			return msg.Match
+		if msg := c.readUntil(msgRoom); msg.Game != nil {
+			return gameView(t, msg.Game)
 		}
 	}
 	t.Fatalf("%s 沒收到牌局狀態", c.playerID)
@@ -117,6 +136,7 @@ func drainUntilMatch(t *testing.T, c *testClient) *matchView {
 // newTestServer 起一台測試伺服器。
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	registerTestGame()
 	ts := httptest.NewServer(New().Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -125,6 +145,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 // newTestServerWithOptions 起一台帶指定設定的測試伺服器。
 func newTestServerWithOptions(t *testing.T, opts Options) *httptest.Server {
 	t.Helper()
+	registerTestGame()
 	ts := httptest.NewServer(NewWithOptions(opts).Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -171,7 +192,7 @@ func TestSetNameRequired(t *testing.T) {
 	c := dial(t, ts)
 
 	// 還沒設暱稱就想開房，應該被擋下。
-	c.send(inbound{Action: actCreateRoom, Name: "我的房"})
+	c.send(inbound{Action: actCreateRoom, Name: "我的房", KindID: testKindID})
 	if msg := c.readUntil(msgError); !strings.Contains(msg.Message, "暱稱") {
 		t.Errorf("錯誤訊息應提到暱稱，實際 %q", msg.Message)
 	}
@@ -190,7 +211,7 @@ func TestCreateRoomMakesYouHost(t *testing.T) {
 	c := dial(t, ts)
 	c.setName("阿明")
 
-	c.send(inbound{Action: actCreateRoom, Name: "測試房"})
+	c.send(inbound{Action: actCreateRoom, Name: "測試房", KindID: testKindID})
 	msg := c.readUntil(msgRoom)
 
 	if msg.Room == nil {
@@ -212,7 +233,7 @@ func TestLobbyListsRooms(t *testing.T) {
 
 	host := dial(t, ts)
 	host.setName("房長")
-	host.send(inbound{Action: actCreateRoom, Name: "大廳測試房"})
+	host.send(inbound{Action: actCreateRoom, Name: "大廳測試房", KindID: testKindID})
 	host.readUntil(msgRoom)
 
 	// 後進來的人應該在大廳看得到這間房。
@@ -246,7 +267,7 @@ func hostWithRoom(t *testing.T, ts *httptest.Server) (*testClient, string) {
 	t.Helper()
 	host := dial(t, ts)
 	host.setName("房長")
-	host.send(inbound{Action: actCreateRoom, Name: "測試房"})
+	host.send(inbound{Action: actCreateRoom, Name: "測試房", KindID: testKindID})
 	msg := host.readUntil(msgRoom)
 	return host, msg.Room.ID
 }
@@ -351,8 +372,8 @@ func TestNonHostCannotKick(t *testing.T) {
 	}
 }
 
-// TestFullGameStart 驗證滿四人開局後，每個人都拿到 13 張手牌，
-// 而且看不到別人的牌。
+// TestFullGameStart 驗證滿四人開局後，每個人都收到自己的牌局狀態，
+// 而且四個視角一致地指向同一位當前行動者。
 func TestFullGameStart(t *testing.T) {
 	ts := newTestServer(t)
 	host, roomID := hostWithRoom(t, ts)
@@ -365,38 +386,27 @@ func TestFullGameStart(t *testing.T) {
 	host.send(inbound{Action: actStart})
 
 	all := append([]*testClient{host}, guests...)
-	turnCount := 0
+	turn := -1
+	seats := map[int]bool{}
 	for _, c := range all {
-		// 每個人都要收到已開始的牌局狀態。
-		var msg outbound
-		for i := 0; i < 12; i++ {
-			msg = c.readUntil(msgRoom)
-			if msg.Match != nil {
-				break
-			}
-		}
-		if msg.Match == nil {
+		v := drainUntilGame(t, c)
+		if v == nil {
 			t.Fatalf("%s 沒收到牌局狀態", c.playerID)
 		}
+		if v.Over {
+			t.Errorf("%s 一開局就看到結束", c.playerID)
+		}
+		seats[v.YourSeat] = true
 
-		if len(msg.Match.YourHand) != 13 {
-			t.Errorf("%s 應有 13 張手牌，實際 %d", c.playerID, len(msg.Match.YourHand))
-		}
-		if len(msg.Match.Seats) != 4 {
-			t.Errorf("牌桌應有 4 個座位，實際 %d", len(msg.Match.Seats))
-		}
-		for _, s := range msg.Match.Seats {
-			if s.CardCount != 13 {
-				t.Errorf("座位 %d 應有 13 張，實際 %d", s.Seat, s.CardCount)
-			}
-			if s.IsTurn {
-				turnCount++
-			}
+		// 四個視角都該指向同一位當前行動者。
+		if turn < 0 {
+			turn = v.Turn
+		} else if v.Turn != turn {
+			t.Errorf("%s 看到的輪次是 %d，其他人看到 %d", c.playerID, v.Turn, turn)
 		}
 	}
-	// 四個人的視角加起來，應該剛好各看到一位「輪到出牌」的玩家。
-	if turnCount != len(all) {
-		t.Errorf("每個視角都該有且只有一位輪到出牌，總計 %d，預期 %d", turnCount, len(all))
+	if len(seats) != 4 {
+		t.Errorf("四個人應該坐在四個不同的座位，實際只有 %d 個", len(seats))
 	}
 }
 
@@ -410,41 +420,14 @@ func TestPlayMustBeYourTurn(t *testing.T) {
 
 	host.send(inbound{Action: actStart})
 
-	// 找出房長的視角，確認是不是他先出。
-	var view *matchView
-	for i := 0; i < 12 && view == nil; i++ {
-		if msg := host.readUntil(msgRoom); msg.Match != nil {
-			view = msg.Match
-		}
-	}
-	if view == nil {
-		t.Fatal("房長沒收到牌局狀態")
-	}
+	// 找出房長的視角，確認是不是輪到他。
+	view := drainUntilGame(t, host)
 
-	if view.CanPlay {
-		t.Skip("這局剛好輪到房長先出，換個角度測不到「不是你的回合」")
+	if view.CanAct {
+		t.Skip("這局剛好輪到房長先動，換個角度測不到「不是你的回合」")
 	}
-	// 不是房長的回合，出任何牌都該被拒絕。
-	host.send(inbound{Action: actPlay, Cards: []cardRef{{Rank: int(view.YourHand[0].Rank), Suit: int(view.YourHand[0].Suit)}}})
-	host.readUntil(msgError)
-}
-
-// TestInvalidCardRejected 驗證超出範圍的牌會被擋下，而不是讓伺服器出錯。
-func TestInvalidCardRejected(t *testing.T) {
-	ts := newTestServer(t)
-	host, roomID := hostWithRoom(t, ts)
-	joinRoom(t, ts, "客人1", roomID)
-	joinRoom(t, ts, "客人2", roomID)
-	joinRoom(t, ts, "客人3", roomID)
-
-	host.send(inbound{Action: actStart})
-	for i := 0; i < 12; i++ {
-		if msg := host.readUntil(msgRoom); msg.Match != nil {
-			break
-		}
-	}
-
-	host.send(inbound{Action: actPlay, Cards: []cardRef{{Rank: 99, Suit: 99}}})
+	// 不是房長的回合，做任何動作都該被拒絕。
+	host.send(inbound{Action: actMove, Move: json.RawMessage(`{}`)})
 	host.readUntil(msgError)
 }
 
