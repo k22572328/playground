@@ -145,11 +145,11 @@ func newRoomView(r *lobby.Room, viewerID string) roomView {
 		YouAreHost: r.IsHost(viewerID),
 		Seats:      make([]slotView, 0, len(r.Seats)),
 	}
-	for i, s := range r.Seats {
+	for _, s := range r.Seats {
 		v.Seats = append(v.Seats, slotView{
 			PlayerID: s.PlayerID,
 			Name:     s.Name,
-			IsHost:   i == 0, // 座位 0 永遠是房長
+			IsHost:   r.IsHost(s.PlayerID),
 			IsYou:    s.PlayerID == viewerID,
 		})
 	}

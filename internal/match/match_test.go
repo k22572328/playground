@@ -206,31 +206,34 @@ func TestPassStateClearsNextRound(t *testing.T) {
 	mustPlay(t, m, 1, []game.Card{card(game.Five, game.Clubs)})
 }
 
-// TestRankingAndSuccession 驗證規格 16：玩家打完最後一手並贏下該 Round 後，
-// 因為已離場無法開下一個 Round，改由順位（下一個還有手牌的座位）接手。
+// TestRankingAndSuccession 驗證規格 16：玩家打完最後一手就立刻取得名次，
+// 且因為他已離場無法開下一個 Round，改由順位（下一個還有手牌的座位）接手。
 func TestRankingAndSuccession(t *testing.T) {
 	m := newRigged(t)
 	setHands(m, [NumPlayers][]game.Card{
 		0: {game.ClubThree}, // 打完這張就第一名
 		1: {card(game.Four, game.Clubs), card(game.Nine, game.Clubs)},
-		2: {card(game.Five, game.Clubs)},
-		3: {card(game.Six, game.Clubs)},
+		2: {card(game.Five, game.Clubs), card(game.Ten, game.Clubs)},
+		3: {card(game.Six, game.Clubs), card(game.Jack, game.Clubs)},
 	})
 	openWithClubThree(t, m)
+
+	// 名次在打完最後一手的當下就確定，不必等其他人 PASS。
 	if m.Players[0].Rank != 1 {
 		t.Fatalf("座位 0 打完手牌應得第一名，實際 %d", m.Players[0].Rank)
 	}
-	// 其餘三家都壓不過或選擇 PASS，Round 由已離場的座位 0 贏下。
-	mustPlay(t, m, 1, nil)
-	mustPlay(t, m, 2, nil)
-	mustPlay(t, m, 3, nil)
-	// 座位 0 已離場，順位落到座位 1。
+	// 座位 0 已離場，Round 立刻結束，順位落到座位 1。
 	if m.Turn != 1 {
 		t.Errorf("順位應由座位 1 接手首攻，實際 %d", m.Turn)
 	}
 	if m.Table != nil {
 		t.Error("新 Round 檯面應該是空的")
 	}
+	// 座位 1 是新 Round 首攻，可以自由出牌，也因此不能 PASS。
+	if err := m.Play(1, nil); err != ErrCannotPass {
+		t.Errorf("首攻不該能 PASS，err = %v", err)
+	}
+	mustPlay(t, m, 1, []game.Card{card(game.Nine, game.Clubs)})
 }
 
 // TestOutPlayersAreSkipped 驗證規格 17：已取得名次的玩家會被直接跳過，

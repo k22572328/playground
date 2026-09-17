@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -115,17 +116,22 @@ func (c *liveClient) errorCount() int {
 	return len(c.errs)
 }
 
+// waitTimeout 是等待伺服器推播的上限。一局要打六十幾手，每手都是一次
+// 往返，開了 -race 又會慢上好幾倍，所以這裡放得比單次往返寬鬆很多 ——
+// 它是用來擋住「真的卡住了」，不是用來量效能。
+const waitTimeout = 30 * time.Second
+
 // waitFor 等待某個條件成立，逾時即讓測試失敗。
 func (c *liveClient) waitFor(what string, cond func() bool) {
 	c.t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(waitTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	c.t.Fatalf("等待「%s」逾時", what)
+	c.t.Fatalf("等待「%s」逾時（%s）", what, waitTimeout)
 }
 
 // TestEndToEndFullGame 走完最接近真人的完整流程：四條連線各自在背景收推播，
@@ -134,7 +140,13 @@ func (c *liveClient) waitFor(what string, cond func() bool) {
 //
 // 這是整個專案的整合測試：規則、房間、連線、視圖任何一層壞掉都會在這裡失敗。
 func TestEndToEndFullGame(t *testing.T) {
-	ts := newTestServer(t)
+	playFullGame(t, newTestServer(t))
+}
+
+// playFullGame 讓四個客戶端連線、開房、開局，然後一路打到分出名次，
+// 並沿路驗證狀態一致。回傳時整局已經結束。
+func playFullGame(t *testing.T, ts *httptest.Server) {
+	t.Helper()
 	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
 
 	// 四位玩家連線並取名。
@@ -173,12 +185,23 @@ func TestEndToEndFullGame(t *testing.T) {
 	}
 
 	// 一路打到結束。每一輪找出當前出牌者，試著出牌，不行就 PASS。
+	// maxTurns 擋住「規則層讓牌局打不完」，deadline 擋住「整個流程卡死」。
 	const maxTurns = 600
+	deadline := time.Now().Add(waitTimeout)
 	turns := 0
 	for ; turns < maxTurns; turns++ {
+		if time.Now().After(deadline) {
+			t.Fatalf("超過 %s 仍未打完（已進行 %d 手），流程卡住了", waitTimeout, turns)
+		}
 		actor := currentActor(players)
 		if actor < 0 {
-			break // 沒有人能動，代表已經結束
+			// 可能是整局結束了，也可能只是四個人的視角還沒同步。
+			// 只有前者才該離開迴圈，後者要等一下再看。
+			if allFinished(players) {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+			continue
 		}
 		p := players[actor]
 		before := p.snapshot()
@@ -241,10 +264,53 @@ func TestEndToEndFullGame(t *testing.T) {
 	}
 }
 
-// currentActor 找出目前輪到誰出牌；沒有人輪到就回傳 -1。
+// allFinished 回報是否四個人都已經看到整局結束。
+func allFinished(players []*liveClient) bool {
+	for _, p := range players {
+		if m := p.snapshot(); m == nil || !m.Over {
+			return false
+		}
+	}
+	return true
+}
+
+// currentActor 找出目前輪到誰出牌；整局結束或暫時看不出來就回傳 -1。
+//
+// 每個客戶端各自收推播，所以某一瞬間他們看到的輪次可能不一致 ——
+// 剛出完牌的人已經更新，其他人還停在上一個畫面。挑出牌者時必須等到
+// 四個人的視角一致，否則會挑到一個「他自己以為輪到他、其實早就過了」
+// 的玩家，接著就卡在那裡誰也動不了。
 func currentActor(players []*liveClient) int {
+	turn := -1
+	for _, p := range players {
+		m := p.snapshot()
+		if m == nil {
+			return -1 // 還有人沒收到牌局狀態
+		}
+		if m.Over {
+			return -1
+		}
+		// 每個視角都會標出當前出牌者是誰，拿它來比對大家是否同步。
+		seat := -1
+		for _, s := range m.Seats {
+			if s.IsTurn {
+				seat = s.Seat
+				break
+			}
+		}
+		if seat < 0 {
+			return -1
+		}
+		if turn < 0 {
+			turn = seat
+		} else if turn != seat {
+			return -1 // 視角還沒同步，等下一輪再看
+		}
+	}
+
+	// 找出坐在那個座位的客戶端。
 	for i, p := range players {
-		if m := p.snapshot(); m != nil && m.CanPlay && !m.Over {
+		if m := p.snapshot(); m != nil && m.YourSeat == turn {
 			return i
 		}
 	}

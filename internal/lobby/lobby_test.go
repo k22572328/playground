@@ -3,6 +3,8 @@ package lobby
 import (
 	"math/rand"
 	"testing"
+
+	"bigTwo/internal/match"
 )
 
 func newLobby() *Lobby { return New(rand.New(rand.NewSource(1))) }
@@ -140,6 +142,67 @@ func TestStartRequiresHost(t *testing.T) {
 
 	if _, err := l.Start(r.ID, "p2"); err != ErrNotHost {
 		t.Errorf("非房長開始遊戲 err = %v, 想要 %v", err, ErrNotHost)
+	}
+}
+
+// TestStartShufflesSeats 驗證開局時座位會重新洗過，不照進房順序。
+// 連開多局，只要看到任何一局的座位排列與進房順序不同就算通過 ——
+// 剛好洗回原順序的機率是 1/24，單看一局無法判斷。
+func TestStartShufflesSeats(t *testing.T) {
+	joinOrder := []string{"host", "p2", "p3", "p4"}
+
+	shuffled := false
+	for seed := range 50 {
+		l := New(rand.New(rand.NewSource(int64(seed))))
+		r := fill(t, l, l.Create("洗座位", seat("host", "房長")))
+		if _, err := l.Start(r.ID, "host"); err != nil {
+			t.Fatalf("Start 失敗: %v", err)
+		}
+
+		// 不論怎麼洗，四個人都必須各出現一次。
+		seen := make(map[string]int)
+		for _, s := range r.Seats {
+			seen[s.PlayerID]++
+		}
+		if len(seen) != match.NumPlayers {
+			t.Fatalf("seed %d: 洗完只剩 %d 位玩家", seed, len(seen))
+		}
+		for id, n := range seen {
+			if n != 1 {
+				t.Fatalf("seed %d: 玩家 %s 出現 %d 次", seed, id, n)
+			}
+		}
+
+		for i, s := range r.Seats {
+			if s.PlayerID != joinOrder[i] {
+				shuffled = true
+			}
+		}
+	}
+
+	if !shuffled {
+		t.Error("連開 50 局座位順序都與進房順序相同，看起來沒有洗牌")
+	}
+}
+
+// TestHostSurvivesSeatShuffle 驗證洗座位不會把房長身分洗掉 ——
+// 房長是特定的人，不是「坐在座位 0 的人」。
+func TestHostSurvivesSeatShuffle(t *testing.T) {
+	for seed := range 50 {
+		l := New(rand.New(rand.NewSource(int64(seed))))
+		r := fill(t, l, l.Create("洗座位", seat("host", "房長")))
+		if _, err := l.Start(r.ID, "host"); err != nil {
+			t.Fatalf("Start 失敗: %v", err)
+		}
+		if !r.IsHost("host") {
+			t.Fatalf("seed %d: 洗完座位後房長身分跑掉了", seed)
+		}
+		// 其他人不該因為被洗到座位 0 就變成房長。
+		for _, id := range []string{"p2", "p3", "p4"} {
+			if r.IsHost(id) {
+				t.Fatalf("seed %d: %s 不該是房長", seed, id)
+			}
+		}
 	}
 }
 

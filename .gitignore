@@ -12,3 +12,6 @@ coverage.html
 .DS_Store
 .idea/
 .vscode/
+
+# 牌局紀錄
+/logs/

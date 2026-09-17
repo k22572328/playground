@@ -26,6 +26,7 @@ game  ←  match  ←  lobby  ←  server  ←  cmd/server
 - `internal/match`：一局的流程。Round、PASS 資格、名次、順位。
 - `internal/lobby`：房間管理。**所有會改動 Match 的操作都要走這一層**，
   因為它持有保護共用狀態的鎖。
+- `internal/gamelog`：把一局牌寫成人看得懂的紀錄檔，實作 `match.Observer`。
 - `internal/server`：WebSocket 與資料視圖。唯一認識 HTTP 的一層。
 - `web`：前端靜態檔，並用 `go:embed` 把它們編進執行檔。
   **改了 `web/` 底下的檔案要重新編譯才會生效**，開發時可用 `-web web` 繞過。
@@ -53,6 +54,9 @@ game  ←  match  ←  lobby  ←  server  ←  cmd/server
 - 順子順位：`A2345` 最小、`23456` 最大，`JQKA2` 不成立。
 - `23456` 用 **2** 當比較牌。
 - PASS 之後該 Round 永久失去出牌資格，即使檯面被炸掉也一樣。
+- 打完最後一手就**立刻結束 Round**（名次當下確定、檯面清空、順位者自由出牌），
+  不必等其他人再 PASS 一輪。
+- 座位在**開局時重洗**，所以房長不能用「座位 0」認定 —— 用 `Room.hostID`。
 
 ## 測試
 
@@ -66,3 +70,16 @@ GO111MODULE=on go test -race -short ./...  # 改 server/lobby 後必跑
 
 寫測試時請涵蓋臨界與極端情況，不要只測正常路徑 —— 這個專案的幾個真 bug
 都是靠邊界測試與 `-race` 抓出來的。
+
+### 端對端測試的注意事項
+
+`playFullGame` 用四條真的 WebSocket 連線打完一整局。每個客戶端各自收推播，
+所以**某一瞬間四個人看到的輪次可能不一致**。挑「現在輪到誰」時必須等到
+四個視角一致（`currentActor` 會檢查），否則會挑到一個早就過了回合的玩家而卡死。
+同理，`currentActor` 回傳 -1 不代表牌局結束，要另外用 `allFinished` 判斷。
+
+## 牌局紀錄
+
+每局會在 `-logdir`（預設 `logs/`）底下寫一份紀錄檔，內容足以重現整局。
+`match` 層只透過 `Observer` 介面回報事件，**不碰檔案 I/O**；
+真正寫檔的是 `internal/gamelog`。要加記錄內容請擴充 `Observer`。

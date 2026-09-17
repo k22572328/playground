@@ -104,6 +104,14 @@ func newTestServer(t *testing.T) *httptest.Server {
 	return ts
 }
 
+// newTestServerWithOptions 起一台帶指定設定的測試伺服器。
+func newTestServerWithOptions(t *testing.T, opts Options) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(NewWithOptions(opts).Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
 // TestStaticFilesServed 驗證前端頁面供應正常。前端是編進執行檔的，
 // 所以不論伺服器在哪個目錄下執行都該拿得到 —— 曾經因為用相對路徑找
 // web 目錄，導致從 cmd/server 底下執行時每頁都回 404。

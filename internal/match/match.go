@@ -62,6 +62,10 @@ type Match struct {
 
 	// Log 記錄這局的每一手，供前端顯示與重播。
 	Log []Event
+
+	// observer 在每次狀態變化時被呼叫，用來把牌局寫進紀錄檔。
+	// 規則層只負責「說發生了什麼」，怎麼記錄是外層的事。
+	observer Observer
 }
 
 // Event 一次出牌或 PASS 的紀錄。
@@ -71,6 +75,26 @@ type Event struct {
 	Rank  int         `json:"rank"`  // 非 0 表示這手打完後取得的名次
 }
 
+// Observer 接收一局之中的每個重要事件。所有方法都在 Match 的操作過程中
+// 同步呼叫，實作者不應該阻塞太久，也不該回頭呼叫 Match。
+type Observer interface {
+	// Dealt 在發完牌時呼叫，hands 依座位順序給出每家的初始手牌。
+	Dealt(hands [NumPlayers][]game.Card, first int)
+
+	// Played 在成功出牌後呼叫。rank 非 0 表示這手打完後取得名次。
+	Played(seat int, combo game.Combo, rank int)
+
+	// Passed 在玩家 PASS 後呼叫。
+	Passed(seat int)
+
+	// RoundEnded 在一個 Round 結束時呼叫，starter 是下一個 Round 的首攻者。
+	// bySuccession 為真表示贏下 Round 的人已離場，首攻權由順位遞補。
+	RoundEnded(winner, starter int, bySuccession bool)
+
+	// Finished 在整局結束時呼叫，ranks 依名次列出座位，最後一個是第四名。
+	Finished(ranks []int)
+}
+
 // Shuffler 把牌洗亂。抽成介面是為了讓測試可以給定固定牌局。
 type Shuffler interface {
 	Shuffle(n int, swap func(i, j int))
@@ -78,10 +102,17 @@ type Shuffler interface {
 
 // New 開一局新遊戲：洗牌、發牌，持有梅花 3 的玩家取得第一個出牌權。
 func New(names [NumPlayers]string, s Shuffler) *Match {
+	return NewWithObserver(names, s, nil)
+}
+
+// NewWithObserver 與 New 相同，但額外把每個事件通知 obs，用來寫牌局紀錄。
+// obs 為 nil 時不做任何通知。
+func NewWithObserver(names [NumPlayers]string, s Shuffler, obs Observer) *Match {
 	deck := game.NewDeck()
 	s.Shuffle(len(deck), func(i, j int) { deck[i], deck[j] = deck[j], deck[i] })
 
-	m := &Match{leader: none, nextRank: 1}
+	m := &Match{leader: none, nextRank: 1, observer: obs}
+	var dealt [NumPlayers][]game.Card
 	for seat := range m.Players {
 		h := deck[seat*CardsPerHand : (seat+1)*CardsPerHand]
 		sort.Slice(h, func(a, b int) bool { return h[a].Less(h[b]) })
@@ -89,6 +120,12 @@ func New(names [NumPlayers]string, s Shuffler) *Match {
 		if slices.Contains(h, game.ClubThree) {
 			m.Turn = seat
 		}
+		// 交給觀察者的是複本，之後出牌不會動到紀錄裡的初始手牌。
+		dealt[seat] = append([]game.Card(nil), h...)
+	}
+
+	if obs != nil {
+		obs.Dealt(dealt, m.Turn)
 	}
 	return m
 }
@@ -141,15 +178,38 @@ func (m *Match) Play(seat int, cards []game.Card) error {
 	m.leader = seat
 
 	ev := Event{Seat: seat, Combo: &combo}
-	if len(p.Hand) == 0 {
+	out := len(p.Hand) == 0
+	if out {
+		// 名次在打完最後一手的當下就確定，不必等其他人 PASS。
 		p.Rank = m.nextRank
 		m.nextRank++
 		ev.Rank = p.Rank
 	}
 	m.Log = append(m.Log, ev)
+	if m.observer != nil {
+		m.observer.Played(seat, combo, ev.Rank)
+	}
+
+	// 打完最後一手的人已經離場，這個 Round 沒有人需要再壓他的牌，
+	// 所以直接結束 Round，由順位者重新自由出牌。
+	if out {
+		if m.Over() {
+			m.notifyFinished()
+		} else {
+			m.endRound()
+		}
+		return nil
+	}
 
 	m.advance()
 	return nil
+}
+
+// notifyFinished 在整局結束時通知觀察者。
+func (m *Match) notifyFinished() {
+	if m.observer != nil {
+		m.observer.Finished(m.finalOrder())
+	}
 }
 
 // validate 檢查這組牌在目前狀態下能不能打出去。
@@ -176,6 +236,9 @@ func (m *Match) pass(seat int) error {
 	}
 	m.Players[seat].passed = true
 	m.Log = append(m.Log, Event{Seat: seat, Combo: nil})
+	if m.observer != nil {
+		m.observer.Passed(seat)
+	}
 	m.advance()
 	return nil
 }
@@ -184,6 +247,7 @@ func (m *Match) pass(seat int) error {
 // 則結束 Round 並決定下一個 Round 的首攻者。
 func (m *Match) advance() {
 	if m.Over() {
+		m.notifyFinished()
 		return
 	}
 	if next, ok := m.nextEligible(); ok {
@@ -191,6 +255,20 @@ func (m *Match) advance() {
 		return
 	}
 	m.endRound()
+}
+
+// finalOrder 依名次列出座位，最後補上唯一沒排上名次的那位（第四名）。
+func (m *Match) finalOrder() []int {
+	order := make([]int, 0, NumPlayers)
+	for _, p := range m.Rankings() {
+		order = append(order, p.Seat)
+	}
+	for _, p := range m.Players {
+		if !p.Out() {
+			order = append(order, p.Seat)
+		}
+	}
+	return order
 }
 
 // nextEligible 從目前座位往下找還能在本 Round 出牌的玩家：
@@ -217,8 +295,12 @@ func (m *Match) endRound() {
 		p.passed = false
 	}
 
-	starter := m.leader
-	if m.Players[starter].Out() {
+	winner := m.leader
+	starter := winner
+	// 贏下 Round 的人若已離場，改由順位接手：他成為新 Round 的首攻者，
+	// 檯面已清空，可以自由出任何合法牌型。
+	bySuccession := m.Players[starter].Out()
+	if bySuccession {
 		for i := 1; i < NumPlayers; i++ {
 			seat := (m.leader + i) % NumPlayers
 			if !m.Players[seat].Out() {
@@ -229,6 +311,10 @@ func (m *Match) endRound() {
 	}
 	m.Turn = starter
 	m.leader = starter
+
+	if m.observer != nil {
+		m.observer.RoundEnded(winner, starter, bySuccession)
+	}
 }
 
 // holdsAll 回報 seat 手上是否真的有這些牌。

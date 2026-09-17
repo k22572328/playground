@@ -15,7 +15,9 @@ import (
 	"github.com/gorilla/websocket"
 
 	"bigTwo/internal/game"
+	"bigTwo/internal/gamelog"
 	"bigTwo/internal/lobby"
+	"bigTwo/internal/match"
 	"bigTwo/web"
 )
 
@@ -43,13 +45,35 @@ type Server struct {
 	nextPlayer atomic.Int64
 }
 
-// New 建立一台伺服器，前端頁面取自內嵌的靜態檔。
-func New() *Server { return NewWithFS(web.FS()) }
+// Options 調整伺服器的行為。零值即為合理的預設：內嵌前端、不寫牌局紀錄。
+type Options struct {
+	// WebFS 是前端靜態檔的來源；nil 表示使用編進執行檔的版本。
+	WebFS fs.FS
+
+	// LogDir 是牌局紀錄的存放目錄；空字串表示不記錄。
+	LogDir string
+}
+
+// New 建立一台伺服器，前端頁面取自內嵌的靜態檔，不寫牌局紀錄。
+func New() *Server { return NewWithOptions(Options{}) }
 
 // NewWithFS 建立一台伺服器，並指定前端靜態檔的來源。
 // 開發時可以傳入 os.DirFS("web")，改了前端不必重新編譯。
-func NewWithFS(webFS fs.FS) *Server {
-	l := lobby.New(rand.New(rand.NewSource(time.Now().UnixNano())))
+func NewWithFS(webFS fs.FS) *Server { return NewWithOptions(Options{WebFS: webFS}) }
+
+// NewWithOptions 依 opts 建立一台伺服器。
+func NewWithOptions(opts Options) *Server {
+	webFS := opts.WebFS
+	if webFS == nil {
+		webFS = web.FS()
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	l := lobby.New(rng)
+	if opts.LogDir != "" {
+		l = lobby.NewWithRecorder(rng, recorderFactory(opts.LogDir))
+	}
+
 	return &Server{
 		hub:   newHub(l),
 		webFS: webFS,
@@ -59,6 +83,20 @@ func NewWithFS(webFS fs.FS) *Server {
 			// 這是區網內自架的遊戲，不做跨站來源限制。
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
+	}
+}
+
+// recorderFactory 產生一個在 dir 底下開紀錄檔的工廠。
+// 開檔失敗只記在伺服器日誌裡，遊戲照常進行 —— 記錄不該擋住玩家。
+func recorderFactory(dir string) lobby.NewRecorder {
+	return func(roomID string, names [match.NumPlayers]string) lobby.Recorder {
+		rec, err := gamelog.Create(dir, roomID, names)
+		if err != nil {
+			log.Printf("建立牌局紀錄失敗（遊戲繼續進行）: %v", err)
+			return rec
+		}
+		log.Printf("房間 %s 開局，紀錄寫入 %s", roomID, rec.Path())
+		return rec
 	}
 }
 

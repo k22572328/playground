@@ -6,6 +6,50 @@ import (
 	"bigTwo/internal/game"
 )
 
+// TestGoingOutEndsRoundImmediately 驗證打完最後一手就立刻結束 Round：
+// 出完牌的人已經離場，沒有人需要再壓他的牌，所以檯面立刻清空，
+// 順位者馬上取得自由出牌權，不必讓其他人再空跑一輪 PASS。
+func TestGoingOutEndsRoundImmediately(t *testing.T) {
+	m := newRigged(t)
+	setHands(m, [NumPlayers][]game.Card{
+		0: {game.ClubThree, card(game.Eight, game.Clubs), card(game.Eight, game.Diamonds)},
+		// 其餘三家手上都是散牌，湊不出對子。
+		1: {card(game.Four, game.Clubs), card(game.Nine, game.Clubs), card(game.Ten, game.Clubs)},
+		2: {card(game.Five, game.Clubs), card(game.Nine, game.Diamonds), card(game.Ten, game.Diamonds)},
+		3: {card(game.Six, game.Clubs), card(game.Nine, game.Hearts), card(game.Ten, game.Hearts)},
+	})
+
+	// 先讓座位 0 取得自由出牌權。
+	openWithClubThree(t, m)
+	mustPlay(t, m, 1, nil)
+	mustPlay(t, m, 2, nil)
+	mustPlay(t, m, 3, nil)
+
+	// 座位 0 打出對 8，這是他的最後一手。
+	mustPlay(t, m, 0, []game.Card{card(game.Eight, game.Clubs), card(game.Eight, game.Diamonds)})
+
+	// 名次當下就確定。
+	if m.Players[0].Rank != 1 {
+		t.Fatalf("座位 0 應立刻取得第一名，實際 %d", m.Players[0].Rank)
+	}
+	// Round 立刻結束，檯面清空。
+	if m.Table != nil {
+		t.Errorf("脫手後檯面應該清空，實際還有 %v", m.Table.Cards)
+	}
+	// 順位交給座位 1，而且他可以自由出任何合法牌型。
+	if m.Turn != 1 {
+		t.Fatalf("順位應交給座位 1，實際輪到 %d", m.Turn)
+	}
+	moves := m.LegalMoves(1)
+	if len(moves) == 0 {
+		t.Fatal("順位者應該能自由出牌，實際一組都不能出")
+	}
+	// 手上三張散牌，自由出牌時每張都能單獨打出去。
+	if len(moves) != 3 {
+		t.Errorf("座位 1 應有 3 種出法（三張單張），實際 %d 種", len(moves))
+	}
+}
+
 // TestEveryoneElseOutEndsRound 驗證只剩一位對手時的 Round 結束判定：
 // 其他人都已離場，該對手一 PASS，Round 就該立刻結束。
 func TestEveryoneElseOutEndsRound(t *testing.T) {
@@ -70,14 +114,16 @@ func TestWinnerOfRoundLeavesSuccessionWraps(t *testing.T) {
 	if m.Players[3].Rank != 1 {
 		t.Fatalf("座位 3 應得第一名，實際 %d", m.Players[3].Rank)
 	}
-	// 其餘三家都壓不過梅花 6 就 PASS，Round 由已離場的座位 3 贏下。
-	mustPlay(t, m, 0, nil)
-	mustPlay(t, m, 1, nil)
-	mustPlay(t, m, 2, nil)
+	// 座位 3 一脫手 Round 就結束，不必等其他人 PASS。
 	// 順位從座位 3 的下一位開始找，也就是繞回座位 0。
 	if m.Turn != 0 {
 		t.Errorf("順位應繞回座位 0，實際 %d", m.Turn)
 	}
+	if m.Table != nil {
+		t.Error("脫手後檯面應該清空")
+	}
+	// 座位 0 是新 Round 的首攻，可以自由出牌。
+	mustPlay(t, m, 0, []game.Card{card(game.Nine, game.Clubs), card(game.Nine, game.Diamonds)})
 }
 
 // TestSpecialComboBreaksIntoNormalRound 驗證規格第 5 條：
@@ -90,10 +136,11 @@ func TestSpecialComboBreaksIntoNormalRound(t *testing.T) {
 			card(game.Four, game.Clubs)},
 		1: {card(game.Jack, game.Clubs), card(game.Jack, game.Diamonds),
 			card(game.Queen, game.Clubs), card(game.Queen, game.Diamonds)},
-		// 座位 2 手握鐵支，等著炸掉對子 Round。
+		// 座位 2 手握鐵支，等著炸掉對子 Round。多留一張牌，
+		// 免得打出鐵支就脫手，那樣 Round 會立刻結束，測不到被炸之後的限制。
 		2: {card(game.Seven, game.Clubs), card(game.Seven, game.Diamonds),
 			card(game.Seven, game.Hearts), card(game.Seven, game.Spades),
-			card(game.Nine, game.Clubs)},
+			card(game.Nine, game.Clubs), card(game.Ten, game.Clubs)},
 		3: {card(game.King, game.Clubs), card(game.King, game.Diamonds),
 			card(game.Two, game.Clubs), card(game.Two, game.Diamonds)},
 	})

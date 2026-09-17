@@ -40,21 +40,26 @@ type Room struct {
 	// Match 在遊戲開始後才存在。
 	Match *match.Match `json:"-"`
 
+	// hostID 是房長。開局會重新洗座位，所以房長不能用「座位 0」來認定。
+	hostID string
+
+	// recorder 是這局的紀錄檔，遊戲結束或房間關閉時要收起來。
+	recorder Recorder
+
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 // Host 回報房長；空房間沒有房長。
 func (r *Room) Host() (Seat, bool) {
-	if len(r.Seats) == 0 {
-		return Seat{}, false
+	if i := r.indexOf(r.hostID); i >= 0 {
+		return r.Seats[i], true
 	}
-	return r.Seats[0], true
+	return Seat{}, false
 }
 
 // IsHost 回報 playerID 是否為房長。
 func (r *Room) IsHost(playerID string) bool {
-	host, ok := r.Host()
-	return ok && host.PlayerID == playerID
+	return playerID != "" && playerID == r.hostID
 }
 
 // Full 回報房間是否已滿。
@@ -74,6 +79,15 @@ func (r *Room) indexOf(playerID string) int {
 	return -1
 }
 
+// Recorder 是一局牌的紀錄檔。它同時是 match 的觀察者，並且要能被關閉。
+type Recorder interface {
+	match.Observer
+	Close() error
+}
+
+// NewRecorder 替一局牌開一份紀錄。回傳 nil 表示這局不做紀錄。
+type NewRecorder func(roomID string, names [match.NumPlayers]string) Recorder
+
 // Lobby 是所有房間的集合，可安全地並行存取。
 type Lobby struct {
 	mu     sync.RWMutex
@@ -82,11 +96,21 @@ type Lobby struct {
 
 	// rng 供發牌使用；集中在這裡以便測試注入固定亂數。
 	rng *rand.Rand
+
+	// newRecorder 在開局時建立紀錄檔；nil 表示不記錄。
+	newRecorder NewRecorder
 }
 
-// New 建立一個空的大廳。
+// New 建立一個空的大廳，不產生牌局紀錄。
 func New(rng *rand.Rand) *Lobby {
 	return &Lobby{rooms: make(map[string]*Room), rng: rng}
+}
+
+// NewWithRecorder 建立一個會把每局牌寫成紀錄檔的大廳。
+func NewWithRecorder(rng *rand.Rand, nr NewRecorder) *Lobby {
+	l := New(rng)
+	l.newRecorder = nr
+	return l
 }
 
 // List 列出目前所有房間，供大廳畫面顯示。
@@ -151,6 +175,7 @@ func (l *Lobby) Create(name string, host Seat) *Room {
 		ID:        roomID(l.nextID),
 		Name:      name,
 		Seats:     []Seat{host},
+		hostID:    host.PlayerID,
 		CreatedAt: time.Now(),
 	}
 	l.rooms[r.ID] = r
@@ -192,12 +217,26 @@ func (l *Lobby) Leave(roomID, playerID string) error {
 	if i < 0 {
 		return ErrNotInRoom
 	}
-	// 座位 0 一定是房長，所以移掉後由原本的下一位自然遞補。
 	r.Seats = append(r.Seats[:i], r.Seats[i+1:]...)
 	if len(r.Seats) == 0 {
+		r.closeRecorder()
 		delete(l.rooms, roomID)
+		return nil
+	}
+	// 房長離開就把房長交給剩下的第一位。
+	if playerID == r.hostID {
+		r.hostID = r.Seats[0].PlayerID
 	}
 	return nil
+}
+
+// closeRecorder 收起這個房間的紀錄檔。重複呼叫是安全的。
+func (r *Room) closeRecorder() {
+	if r.recorder == nil {
+		return
+	}
+	_ = r.recorder.Close()
+	r.recorder = nil
 }
 
 // Kick 由房長把某位玩家踢出房間。遊戲開始後不能踢人。
@@ -245,11 +284,25 @@ func (l *Lobby) Start(roomID, hostID string) (*match.Match, error) {
 		return nil, ErrNotEnough
 	}
 
+	// 開局時重新洗座位，這樣誰坐哪不會由進房順序決定 ——
+	// 房長也就沒有「先進來就固定坐在誰的上家」這種優勢。
+	l.rng.Shuffle(len(r.Seats), func(i, j int) {
+		r.Seats[i], r.Seats[j] = r.Seats[j], r.Seats[i]
+	})
+
 	var names [match.NumPlayers]string
 	for i, s := range r.Seats {
 		names[i] = s.Name
 	}
-	r.Match = match.New(names, l.rng)
+
+	// 每開一局就開一份紀錄檔，日後追查問題用。記錄失敗不影響開局。
+	var obs match.Observer
+	if l.newRecorder != nil {
+		r.recorder = l.newRecorder(roomID, names)
+		obs = r.recorder
+	}
+
+	r.Match = match.NewWithObserver(names, l.rng, obs)
 	r.Started = true
 	return r.Match, nil
 }
@@ -271,7 +324,14 @@ func (l *Lobby) PlayInRoom(roomID, playerID string, cards []game.Card) error {
 	if seat < 0 {
 		return ErrNotInRoom
 	}
-	return r.Match.Play(seat, cards)
+	err := r.Match.Play(seat, cards)
+
+	// 一局打完就把紀錄收起來，確保內容落到磁碟上，
+	// 不必等房間解散。Finished 已經在 Play 裡寫進去了。
+	if r.Match.Over() {
+		r.closeRecorder()
+	}
+	return err
 }
 
 // roomID 產生簡短好記的房號。
