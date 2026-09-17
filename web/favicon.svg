@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Playground">
+  <rect width="64" height="64" rx="12" fill="#14543d"/>
+  <!-- 兩張斜疊的牌：後面那張露出一角，前面那張擺正 -->
+  <g transform="rotate(-18 32 36)">
+    <rect x="16" y="16" width="24" height="34" rx="4" fill="#d4a74a"/>
+  </g>
+  <rect x="24" y="15" width="25" height="35" rx="4" fill="#fdfcf8"/>
+  <!-- 黑桃：大老二最大的花色 -->
+  <path d="M36.5 22c3.6 3.9 7.5 6.2 7.5 9.7a3.7 3.7 0 0 1-6.1 2.9l.9 4.6h-4.6l.9-4.6a3.7 3.7 0 0 1-6.1-2.9c0-3.5 3.9-5.8 7.5-9.7z" fill="#1a1a1a"/>
+</svg>
