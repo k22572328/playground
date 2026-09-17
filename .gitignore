@@ -1,0 +1,14 @@
+# 編譯產物
+/bigtwo
+/server
+*.exe
+
+# 測試與分析
+*.test
+*.out
+coverage.html
+
+# 編輯器與系統
+.DS_Store
+.idea/
+.vscode/

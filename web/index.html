@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>大老二</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 連線狀態：斷線時才顯示 -->
+<div id="connection" class="banner" hidden>連線中斷，正在重新連線…</div>
+
+<!-- 畫面一：輸入暱稱 -->
+<section id="screen-name" class="screen">
+  <div class="card-panel">
+    <h1 class="title">大老二</h1>
+    <p class="subtitle">輸入你的暱稱開始遊戲</p>
+    <form id="name-form" class="form-row" autocomplete="off">
+      <input id="name-input" type="text" maxlength="12" placeholder="你的暱稱" required>
+      <button type="submit" class="btn btn-primary">進入大廳</button>
+    </form>
+  </div>
+</section>
+
+<!-- 畫面二：大廳 -->
+<section id="screen-lobby" class="screen" hidden>
+  <header class="bar">
+    <h2>遊戲大廳</h2>
+    <span id="lobby-me" class="pill"></span>
+  </header>
+
+  <form id="create-form" class="form-row" autocomplete="off">
+    <input id="room-name-input" type="text" maxlength="12" placeholder="房間名稱（可留空）">
+    <button type="submit" class="btn btn-primary">建立房間</button>
+  </form>
+
+  <ul id="room-list" class="room-list"></ul>
+  <p id="lobby-empty" class="empty">目前沒有房間，建立一間吧。</p>
+</section>
+
+<!-- 畫面三：房間等待 -->
+<section id="screen-room" class="screen" hidden>
+  <header class="bar">
+    <h2 id="room-title">房間</h2>
+    <button id="leave-btn" class="btn btn-ghost">離開房間</button>
+  </header>
+
+  <ol id="seat-list" class="seat-list"></ol>
+
+  <div class="room-actions">
+    <button id="start-btn" class="btn btn-primary" disabled>開始遊戲</button>
+    <p id="start-hint" class="hint"></p>
+  </div>
+</section>
+
+<!-- 畫面四：牌桌 -->
+<section id="screen-table" class="screen screen-table" hidden>
+  <div id="opponents" class="opponents"></div>
+
+  <div class="table-center">
+    <div id="table-label" class="table-label"></div>
+    <div id="table-cards" class="table-cards"></div>
+  </div>
+
+  <div class="my-area">
+    <div id="my-status" class="my-status"></div>
+    <div id="my-hand" class="hand"></div>
+    <div class="controls">
+      <button id="play-btn" class="btn btn-primary" disabled>出牌</button>
+      <button id="pass-btn" class="btn btn-ghost" disabled>PASS</button>
+      <button id="clear-btn" class="btn btn-ghost">取消選取</button>
+    </div>
+  </div>
+</section>
+
+<!-- 結算 -->
+<div id="result" class="overlay" hidden>
+  <div class="card-panel">
+    <h2>本局結束</h2>
+    <ol id="result-list" class="result-list"></ol>
+    <button id="result-close" class="btn btn-primary">回到房間</button>
+  </div>
+</div>
+
+<!-- 提示訊息 -->
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

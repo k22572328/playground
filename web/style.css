@@ -1,0 +1,337 @@
+/* 大老二 —— 牌桌配色以深綠檯面為底，牌面用白色高對比。 */
+
+:root {
+  --felt-dark: #0f3d2e;
+  --felt: #14543d;
+  --felt-light: #1c6b4e;
+  --gold: #d4a74a;
+  --ink: #1a1a1a;
+  --paper: #fdfcf8;
+  --muted: #8a9a92;
+  --danger: #c2453c;
+  --radius: 10px;
+  --shadow: 0 2px 8px rgba(0, 0, 0, .28);
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  padding:
+    env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  background: radial-gradient(ellipse at top, var(--felt-light), var(--felt-dark) 70%);
+  color: var(--paper);
+}
+
+/* ---------- 共用元件 ---------- */
+
+.screen {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+}
+
+.title {
+  margin: 0 0 4px;
+  font-size: 2.4rem;
+  letter-spacing: .1em;
+  color: var(--gold);
+}
+
+.subtitle { margin: 0 0 20px; color: var(--muted); }
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.bar h2 { margin: 0; font-size: 1.3rem; }
+
+.card-panel {
+  background: rgba(0, 0, 0, .3);
+  border: 1px solid rgba(212, 167, 74, .3);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  box-shadow: var(--shadow);
+}
+
+.form-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+input[type="text"] {
+  flex: 1 1 180px;
+  min-width: 0;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--paper);
+  background: rgba(0, 0, 0, .35);
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: var(--radius);
+}
+
+input[type="text"]:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+
+.btn {
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: filter .15s, opacity .15s;
+}
+
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn:not(:disabled):hover { filter: brightness(1.12); }
+
+.btn-primary { background: var(--gold); color: #2a1e06; }
+
+.btn-ghost {
+  background: rgba(255, 255, 255, .1);
+  color: var(--paper);
+  border: 1px solid rgba(255, 255, 255, .2);
+}
+
+.btn-danger { background: var(--danger); color: #fff; }
+
+.btn-sm { padding: 5px 12px; font-size: .85rem; }
+
+.pill {
+  padding: 4px 12px;
+  font-size: .85rem;
+  background: rgba(255, 255, 255, .12);
+  border-radius: 999px;
+}
+
+.hint { margin: 8px 0 0; color: var(--muted); font-size: .9rem; }
+.empty { color: var(--muted); text-align: center; padding: 30px 0; }
+
+/* ---------- 大廳 ---------- */
+
+.room-list { list-style: none; margin: 0; padding: 0; }
+
+.room-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: rgba(0, 0, 0, .28);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: var(--radius);
+}
+
+.room-name { font-weight: 600; }
+.room-meta { color: var(--muted); font-size: .88rem; }
+
+.badge {
+  padding: 2px 8px;
+  font-size: .75rem;
+  border-radius: 999px;
+  background: rgba(212, 167, 74, .25);
+  color: var(--gold);
+}
+
+/* ---------- 房間 ---------- */
+
+.seat-list { list-style: none; margin: 0 0 20px; padding: 0; }
+
+.seat-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, .28);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: var(--radius);
+}
+
+.seat-list .seat-no { color: var(--muted); min-width: 2em; }
+.seat-list .seat-name { flex: 1; font-weight: 600; }
+.seat-list .empty-seat { color: var(--muted); font-style: italic; font-weight: 400; }
+
+.room-actions { text-align: center; }
+
+/* ---------- 牌桌 ---------- */
+
+.screen-table {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100vh;
+  max-width: 1000px;
+}
+
+.opponents {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.opponent {
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, .3);
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+/* 輪到誰出牌就把那一格點亮 */
+.opponent.is-turn {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px rgba(212, 167, 74, .35);
+}
+
+.opponent.is-out { opacity: .5; }
+
+.opponent-name { font-weight: 600; margin-bottom: 4px; }
+.opponent-meta { font-size: .85rem; color: var(--muted); }
+.opponent-rank { color: var(--gold); font-weight: 600; }
+
+.table-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 160px;
+  padding: 16px;
+  background: rgba(0, 0, 0, .18);
+  border-radius: 16px;
+}
+
+.table-label { color: var(--muted); font-size: .9rem; }
+.table-cards { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+
+.my-area { display: flex; flex-direction: column; gap: 12px; }
+.my-status { text-align: center; min-height: 1.4em; font-weight: 600; }
+.my-status.active { color: var(--gold); }
+
+.hand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  min-height: 96px;
+}
+
+.controls { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+/* ---------- 撲克牌 ---------- */
+
+.card {
+  position: relative;
+  width: 58px;
+  height: 82px;
+  padding: 4px 6px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid rgba(0, 0, 0, .25);
+  border-radius: 7px;
+  box-shadow: var(--shadow);
+  font-weight: 700;
+  line-height: 1.1;
+  user-select: none;
+}
+
+/* 紅色花色：紅心與方塊 */
+.card.red { color: #c0392b; }
+
+.card .rank { font-size: 1.05rem; }
+.card .suit { font-size: 1.15rem; }
+
+/* 牌角的第二組標示，倒過來印在右下角 */
+.card .corner-br {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  transform: rotate(180deg);
+}
+
+/* 手牌可以點選 */
+.hand .card {
+  cursor: pointer;
+  transition: transform .12s, box-shadow .12s;
+}
+
+.hand .card:hover { transform: translateY(-6px); }
+
+.hand .card.selected {
+  transform: translateY(-14px);
+  box-shadow: 0 0 0 3px var(--gold), var(--shadow);
+}
+
+/* 檯面上的牌比較小，且不可點 */
+.table-cards .card { width: 50px; height: 72px; }
+
+/* ---------- 結算與提示 ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, .7);
+  z-index: 20;
+}
+
+.result-list { text-align: left; margin: 0 0 20px; padding-left: 1.4em; }
+.result-list li { padding: 4px 0; }
+.result-list .me { color: var(--gold); font-weight: 700; }
+
+.banner {
+  padding: 8px 16px;
+  text-align: center;
+  background: var(--danger);
+  color: #fff;
+  font-size: .9rem;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  max-width: min(90vw, 420px);
+  padding: 10px 18px;
+  background: rgba(0, 0, 0, .88);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
+[hidden] { display: none !important; }
+
+/* ---------- 窄螢幕 ---------- */
+
+@media (max-width: 520px) {
+  .card { width: 46px; height: 66px; padding: 3px 4px; }
+  .card .rank { font-size: .9rem; }
+  .card .suit { font-size: 1rem; }
+  .table-cards .card { width: 42px; height: 60px; }
+  .hand { gap: 4px; min-height: 76px; }
+  .title { font-size: 1.9rem; }
+}
